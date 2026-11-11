@@ -6,25 +6,29 @@
 <title>PayMeBot: invoice-to-cash agent</title>
 <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@33/dist/ag-grid-community.min.js"></script>
 <style>
-  :root { --ink:#14213d; --muted:#5c677d; --line:#e3e7ee; --bg:#f6f7fb; --card:#fff; --accent:#0b57d0; --ok:#137333; --warn:#b06000; }
+  :root { --ink:#14213d; --muted:#5c677d; --line:#e3e7ee; --bg:#f6f7fb; --card:#fff; --accent:#0b57d0; --on-accent:#fff;
+          --bubble:#eef2f9; --ok:#137333; --ok-bg:#e6f4ea; --warn:#b06000; --warn-bg:#fef3e0; --idle-bg:#eef0f4; color-scheme: light; }
+  :root[data-theme="dark"] { --ink:#e6e9ef; --muted:#9aa4b5; --line:#2a303b; --bg:#0f1218; --card:#171b23; --accent:#7aa7ff; --on-accent:#0b1220;
+          --bubble:#222834; --ok:#7ddc9a; --ok-bg:#16301f; --warn:#f5c26b; --warn-bg:#3a2a10; --idle-bg:#262c38; color-scheme: dark; }
   * { box-sizing: border-box; }
   body { margin:0; font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--ink); background:var(--bg); }
-  header { display:flex; align-items:center; gap:12px; padding:14px 24px; background:var(--card); border-bottom:1px solid var(--line); }
+  header { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; padding:14px 24px; background:var(--card); border-bottom:1px solid var(--line); }
   header h1 { font-size:18px; margin:0; }
   header .tag { color:var(--muted); font-size:13px; }
-  header .mode { margin-left:auto; font-size:12px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:3px 10px; }
+  header .right { margin-left:auto; display:flex; align-items:center; gap:8px; }
+  header .mode { font-size:12px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:3px 10px; }
   main { display:grid; grid-template-columns: 380px 1fr; gap:16px; padding:16px 24px; max-width:1400px; margin:0 auto; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
   h2 { font-size:14px; margin:0 0 10px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
   #chat { height:340px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; margin-bottom:10px; }
   .msg { padding:8px 12px; border-radius:10px; max-width:92%; white-space:pre-wrap; }
-  .msg.user { align-self:flex-end; background:var(--accent); color:#fff; }
-  .msg.bot { align-self:flex-start; background:#eef2f9; }
+  .msg.user { align-self:flex-end; background:var(--accent); color:var(--on-accent); }
+  .msg.bot { align-self:flex-start; background:var(--bubble); }
   .msg.tool { align-self:flex-start; font:12px ui-monospace, monospace; color:var(--muted); background:none; padding:0 4px; }
-  textarea { width:100%; min-height:70px; padding:10px; border:1px solid var(--line); border-radius:8px; font:inherit; resize:vertical; }
-  button { font:inherit; border:0; border-radius:8px; padding:9px 14px; cursor:pointer; background:var(--accent); color:#fff; }
-  button.secondary { background:#fff; color:var(--accent); border:1px solid var(--accent); }
+  textarea { width:100%; min-height:70px; padding:10px; border:1px solid var(--line); border-radius:8px; font:inherit; resize:vertical; background:var(--card); color:var(--ink); }
+  button { font:inherit; border:0; border-radius:8px; padding:9px 14px; min-height:40px; cursor:pointer; background:var(--accent); color:var(--on-accent); }
+  button.secondary { background:transparent; color:var(--accent); border:1px solid var(--accent); }
   button:disabled { opacity:.5; cursor:wait; }
   .row { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
   .examples { margin-top:10px; font-size:13px; color:var(--muted); }
@@ -33,10 +37,20 @@
   .stat b { display:block; font-size:22px; }
   .stat span { color:var(--muted); font-size:13px; }
   #grid { height:360px; }
+  #grid a { color:var(--accent); }
+  #themeBtn { background:transparent; color:var(--ink); border:1px solid var(--line); padding:4px 12px; min-height:32px; font-size:13px; }
+  @media (max-width: 900px) { main { padding:12px; gap:12px; } header { padding:12px; } #chat { height:260px; } }
+  @media (max-width: 600px) {
+    header .tag { flex-basis:100%; order:3; }
+    .stats { gap:8px; } .stat { padding:10px; } .stat b { font-size:17px; } .stat span { font-size:12px; }
+    .row button { flex:1; }
+    #grid { height:320px; }
+    textarea { font-size:16px; } /* stops zoom on focus in iOS */
+  }
   .pill { padding:2px 9px; border-radius:999px; font-size:12px; font-weight:600; }
-  .pill.PAID, .pill.MARKED_AS_PAID { background:#e6f4ea; color:var(--ok); }
-  .pill.SENT, .pill.PARTIALLY_PAID, .pill.PAYMENT_PENDING { background:#fef3e0; color:var(--warn); }
-  .pill.DRAFT, .pill.CANCELLED { background:#eef0f4; color:var(--muted); }
+  .pill.PAID, .pill.MARKED_AS_PAID { background:var(--ok-bg); color:var(--ok); }
+  .pill.SENT, .pill.PARTIALLY_PAID, .pill.PAYMENT_PENDING { background:var(--warn-bg); color:var(--warn); }
+  .pill.DRAFT, .pill.CANCELLED { background:var(--idle-bg); color:var(--muted); }
   #events { list-style:none; margin:0; padding:0; max-height:150px; overflow-y:auto; font-size:13px; }
   #events li { padding:5px 0; border-bottom:1px solid var(--line); }
   #events time { color:var(--muted); margin-right:8px; }
@@ -46,7 +60,7 @@
 <header>
   <h1>PayMeBot</h1>
   <span class="tag">Tell it what you did. It bills the client through PayPal and follows up on payment.</span>
-  <span class="mode" id="mode"></span>
+  <span class="right"><span class="mode" id="mode"></span><button id="themeBtn" type="button" aria-label="Switch between light and dark mode">Dark</button></span>
 </header>
 <main>
   <section class="card">
@@ -83,6 +97,27 @@
 const $ = id => document.getElementById(id);
 let history = [];
 let gridApi;
+
+
+// Theme: saved choice first, then the system setting.
+function savedTheme() { try { return localStorage.getItem('theme'); } catch (e) { return null; } }
+function currentTheme() { return document.documentElement.dataset.theme || 'light'; }
+function gridTheme() {
+  if (!agGrid.themeQuartz) return undefined;
+  return agGrid.themeQuartz.withPart(currentTheme() === 'dark' ? agGrid.colorSchemeDark : agGrid.colorSchemeLight);
+}
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  $('themeBtn').textContent = t === 'dark' ? 'Light' : 'Dark';
+  if (gridApi) gridApi.setGridOption('theme', gridTheme());
+}
+// Small screens: show only the columns that matter.
+function fitColumns() {
+  if (!gridApi) return;
+  const w = window.innerWidth;
+  gridApi.setColumnsVisible(['currency', 'total'], w > 600);
+  gridApi.setColumnsVisible(['number', 'due_date'], w > 480);
+}
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
 
@@ -159,7 +194,7 @@ function initGrid() {
       { field: 'due_amount', headerName: 'Due', width: 110, type: 'rightAligned', valueFormatter: money },
       { field: 'currency', headerName: 'Cur.', width: 80 },
       { field: 'due_date', headerName: 'Due date', width: 120, sort: 'desc' },
-      { headerName: 'Action', width: 130, sortable: false,
+      { headerName: 'Action', width: 110, sortable: false, pinned: 'right', colId: 'action',
         cellRenderer: p => {
           const d = p.data;
           if (d.status === 'DRAFT') {
@@ -177,6 +212,7 @@ function initGrid() {
         } },
     ],
     rowData: [],
+    theme: gridTheme(),
     defaultColDef: { sortable: true, resizable: true },
     getRowId: p => p.data.id,
     overlayNoRowsTemplate: 'No invoices yet. Ask the agent to create one.',
@@ -207,7 +243,15 @@ $('chaseBtn').onclick = chase;
 $('input').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('sendBtn').click(); });
 document.querySelectorAll('.examples a').forEach(a => a.onclick = () => { $('input').value = a.textContent; $('input').focus(); });
 
+applyTheme(savedTheme() || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+$('themeBtn').onclick = () => {
+  const t = currentTheme() === 'dark' ? 'light' : 'dark';
+  try { localStorage.setItem('theme', t); } catch (e) {}
+  applyTheme(t);
+};
 initGrid();
+fitColumns();
+window.addEventListener('resize', fitColumns);
 api('/api/config').then(c => { $('mode').textContent = 'PayPal: ' + c.paypal_mode + ' · AI: ' + c.agent_mode; });
 refresh();
 setInterval(refresh, 8000);

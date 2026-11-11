@@ -1,4 +1,5 @@
 """PayPal Invoicing v2 client (sandbox by default) with an offline mock mode."""
+import asyncio
 import os
 import time
 import uuid
@@ -23,6 +24,7 @@ class PayPalClient:
         self._token = None
         self._token_exp = 0.0
         self.http = httpx.AsyncClient(timeout=30)
+        self._pay_urls = {}
 
     async def _auth(self) -> str:
         if self._token and time.time() < self._token_exp - 60:
@@ -91,7 +93,21 @@ class PayPalClient:
     async def list_invoices(self) -> list:
         data = await self._call("GET", "/v2/invoicing/invoices",
                                 params={"page_size": 50, "total_required": "true", "fields": "all"})
-        return [summarize(i) for i in data.get("items", [])]
+        invoices = [summarize(i) for i in data.get("items", [])]
+        # The list call does not return the pay link. Read it from the detail call for open invoices.
+        open_ones = [i for i in invoices if not i["pay_url"]
+                     and i["status"] in ("SENT", "PARTIALLY_PAID", "PAYMENT_PENDING")][:15]
+
+        async def fill(inv):
+            if inv["id"] not in self._pay_urls:
+                try:
+                    self._pay_urls[inv["id"]] = (await self.get_invoice(inv["id"]))["pay_url"]
+                except (PayPalError, httpx.HTTPError):
+                    return
+            inv["pay_url"] = self._pay_urls[inv["id"]]
+
+        await asyncio.gather(*(fill(i) for i in open_ones))
+        return invoices
 
     async def send_reminder(self, invoice_id: str, subject: str, note: str) -> dict:
         await self._call("POST", f"/v2/invoicing/invoices/{invoice_id}/remind",
