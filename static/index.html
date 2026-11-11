@@ -61,6 +61,11 @@
   .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:12px; }
   .stat b { display:block; font-size:22px; }
   .stat span { color:var(--muted); font-size:13px; }
+  .cardhead { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+  .cardhead h2 { margin:0; }
+  .cur { font-size:13px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+  .cur select { font:inherit; font-size:13px; padding:4px 8px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); }
+  #grid .ag-row-last { border-bottom:1px solid var(--ag-border-color, var(--line)); }
   .tabs { display:flex; gap:2px; border-bottom:1px solid var(--line); margin-bottom:10px; overflow-x:auto; }
   .tab { background:transparent; color:var(--muted); border:0; border-bottom:2px solid transparent; border-radius:8px 8px 0 0; padding:8px 14px; min-height:0; font-size:14px; white-space:nowrap; }
   .tab:hover { color:var(--ink); background:var(--bubble); }
@@ -130,7 +135,12 @@
       <div class="card stat"><b id="sCount">0</b><span>Invoices</span></div>
     </div>
     <div class="card">
-      <h2>Invoices (live from PayPal)</h2>
+      <div class="cardhead">
+        <h2>Invoices (live from PayPal)</h2>
+        <label class="cur">Currency
+          <select id="curSel" title="Show invoices and totals in this currency. New invoices use it as the default."></select>
+        </label>
+      </div>
       <div class="tabs" role="tablist" aria-label="Filter invoices by status">
         <button class="tab active" role="tab" aria-selected="true" data-tab="all">All <span class="n">0</span></button>
         <button class="tab" role="tab" aria-selected="false" data-tab="draft">Draft <span class="n">0</span></button>
@@ -262,7 +272,7 @@ async function runAgent(label, call) {
 
 async function ask(message) {
   const out = await runAgent(message, () => api('/api/agent', { method: 'POST',
-    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, history }) }));
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, history, currency }) }));
   if (out && out.history) history = out.history;
 }
 const chase = () => runAgent('Chase unpaid invoices', () => api('/api/chase', { method: 'POST' }));
@@ -318,6 +328,28 @@ const money = p => p.value == null ? '' : Number(p.value).toFixed(2);
 // Status tabs filter the table.
 const TABS = { all: null, draft: ['DRAFT'], sent: ['SENT', 'PARTIALLY_PAID', 'PAYMENT_PENDING'], paid: ['PAID', 'MARKED_AS_PAID'] };
 let activeTab = 'all';
+let allInvoices = [];
+let currency = (() => { try { return localStorage.getItem('currency'); } catch (e) { return null; } })() || 'USD';
+const COMMON_CURRENCIES = ['USD', 'EUR', 'GBP', 'AUD', 'CAD', 'SGD', 'JPY'];
+function fillCurrencies() {
+  const present = [...new Set(allInvoices.map(i => i.currency).filter(Boolean))];
+  const list = [...new Set([...present, ...COMMON_CURRENCIES, currency])];
+  const sel = $('curSel');
+  if (sel.options.length !== list.length) {
+    sel.innerHTML = list.map(c => '<option value="' + esc(c) + '">' + esc(c) + '</option>').join('');
+  }
+  sel.value = currency;
+}
+function render() {
+  const mine = allInvoices.filter(i => i.currency === currency);
+  updateTabCounts(mine);
+  const open = mine.filter(i => TABS.sent.includes(i.status));
+  const paid = mine.filter(i => TABS.paid.includes(i.status));
+  $('sOut').textContent = currency + ' ' + open.reduce((s, i) => s + i.due_amount, 0).toFixed(2);
+  $('sPaid').textContent = currency + ' ' + paid.reduce((s, i) => s + i.total, 0).toFixed(2);
+  $('sCount').textContent = mine.length;
+  if (gridApi) { gridApi.onFilterChanged(); autoSize(); }
+}
 function setTab(name) {
   activeTab = name;
   document.querySelectorAll('.tab').forEach(t => {
@@ -336,32 +368,36 @@ function updateTabCounts(invoices) {
 // The app sets the column widths from the content. The user can move columns but cannot resize them.
 function autoSize() {
   if (!gridApi) return;
-  gridApi.autoSizeColumns(['number', 'status', 'total', 'due_amount', 'due_date', 'reminder']);
+  gridApi.autoSizeColumns(['number', 'status', 'total', 'due_amount', 'due_date', 'reminder', 'action']);
+  const others = gridApi.getAllDisplayedColumns().filter(c => c.getColId() !== 'client_name')
+    .reduce((sum, c) => sum + c.getActualWidth(), 0);
+  const spare = $('grid').clientWidth - others - 4;
+  gridApi.setColumnWidths([{ key: 'client_name', newWidth: Math.max(110, Math.floor(spare)) }]);
 }
 
 function initGrid() {
   gridApi = agGrid.createGrid($('grid'), {
     columnDefs: [
       { field: 'number', headerName: 'No.' },
-      { field: 'client_name', headerName: 'Client', flex: 1, minWidth: 120,
+      { field: 'client_name', headerName: 'Client', minWidth: 110,
         tooltipValueGetter: p => p.data.client_email },
       { field: 'status',
         cellRenderer: p => '<span class="pill ' + esc(p.value) + '">' + esc(p.value) + '</span>' },
-      { field: 'total', type: 'rightAligned', valueFormatter: p => (p.data.currency || '') + ' ' + money(p) },
+      { field: 'total', type: 'rightAligned', valueFormatter: money },
       { field: 'due_amount', headerName: 'Due', type: 'rightAligned', valueFormatter: money },
       { field: 'due_date', headerName: 'Due date' },
       { headerName: 'Next reminder', colId: 'reminder', sortable: false,
         valueGetter: p => reminderText(p.data),
         headerTooltip: 'When the next reminder is allowed, and reminders sent of the maximum',
         tooltipValueGetter: p => p.data.last_reminder ? 'Last reminder: ' + new Date(p.data.last_reminder).toLocaleString() : 'No reminder sent yet' },
-      { headerName: 'Action', colId: 'action', width: 168, sortable: false, pinned: 'right',
+      { headerName: 'Action', colId: 'action', width: 150, sortable: false, pinned: 'right',
         suppressMovable: true, cellRenderer: actionCell },
     ],
     rowData: [],
     theme: gridTheme(),
     defaultColDef: { sortable: true, resizable: false, suppressHeaderMenuButton: true },
-    isExternalFilterPresent: () => activeTab !== 'all',
-    doesExternalFilterPass: node => TABS[activeTab].includes(node.data.status),
+    isExternalFilterPresent: () => true,
+    doesExternalFilterPass: node => node.data.currency === currency && (activeTab === 'all' || TABS[activeTab].includes(node.data.status)),
     getRowId: p => p.data.id,
     // Newest invoices first, 15 per page.
     pagination: true,
@@ -377,15 +413,11 @@ function initGrid() {
 async function refresh() {
   try {
     const { invoices } = await api('/api/invoices');
+    allInvoices = invoices;
     gridApi.setGridOption('rowData', invoices);
-    updateTabCounts(invoices);
     gridApi.refreshCells({ columns: ['reminder'], force: true });
-    autoSize();
-    const open = invoices.filter(i => ['SENT', 'PARTIALLY_PAID', 'PAYMENT_PENDING'].includes(i.status));
-    const paid = invoices.filter(i => ['PAID', 'MARKED_AS_PAID'].includes(i.status));
-    $('sOut').textContent = open.reduce((s, i) => s + i.due_amount, 0).toFixed(2);
-    $('sPaid').textContent = paid.reduce((s, i) => s + i.total, 0).toFixed(2);
-    $('sCount').textContent = invoices.length;
+    fillCurrencies();
+    render();
   } catch (e) { /* shown on the next user action */ }
   try {
     const { events } = await api('/api/events');
@@ -399,6 +431,12 @@ async function refresh() {
 $('sendBtn').onclick = () => { const v = $('input').value.trim(); if (v) { $('input').value = ''; ask(v); } };
 $('chaseBtn').onclick = chase;
 $('input').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('sendBtn').click(); });
+$('curSel').onchange = e => {
+  currency = e.target.value;
+  try { localStorage.setItem('currency', currency); } catch (err) {}
+  render();
+  if (gridApi) gridApi.paginationGoToFirstPage();
+};
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => setTab(t.dataset.tab));
 document.querySelectorAll('.chip').forEach(c => c.onclick = () => { $('input').value = c.dataset.text; $('input').focus(); });
 

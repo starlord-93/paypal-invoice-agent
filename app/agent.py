@@ -19,7 +19,7 @@ Rules:
 - When the user describes finished work, create a draft invoice with create_invoice.
   Calculate nothing yourself: give quantity and unit price per line item. PayPal calculates totals.
 - Change relative dates ("Friday", "in 2 weeks") to YYYY-MM-DD. If no due date is given, use 14 days from today.
-- Default currency is USD unless the user gives a different one.
+- Default currency is {currency} unless the user gives a different one.
 - Create an invoice only when you have the client name, client email, and one or more line items with a price.
   If one of these is missing, ask one short question. Do not invent an email address or a price.
 - Send an invoice (send_invoice) only when the user tells you to send it. "Bill", "send" and "invoice and send"
@@ -143,7 +143,7 @@ def model_chain() -> list:
     return names
 
 
-async def _call_gemini(http, key: str, contents: list):
+async def _call_gemini(http, key: str, contents: list, currency: str = "USD"):
     """Try each model in the chain. Returns (response, problems)."""
     global _working_model
     problems = []
@@ -153,7 +153,7 @@ async def _call_gemini(http, key: str, contents: list):
                 GEMINI_URL.format(model=model),
                 headers={"x-goog-api-key": key},
                 json={
-                    "system_instruction": {"parts": [{"text": SYSTEM.format(today=date.today().isoformat())}]},
+                    "system_instruction": {"parts": [{"text": SYSTEM.format(today=date.today().isoformat(), currency=currency)}]},
                     "contents": contents,
                     "tools": TOOLS,
                     "generationConfig": {"temperature": 0.2},
@@ -171,7 +171,7 @@ async def _call_gemini(http, key: str, contents: list):
     return None, problems
 
 
-async def run_agent(paypal, message: str, history: list | None = None) -> dict:
+async def run_agent(paypal, message: str, history: list | None = None, currency: str = "USD") -> dict:
     """Run one user turn. Returns the reply, the tool trace and the updated history."""
     if os.getenv("AGENT_MOCK") == "1":
         return await _mock_agent(paypal, message)
@@ -186,7 +186,7 @@ async def run_agent(paypal, message: str, history: list | None = None) -> dict:
 
     async with httpx.AsyncClient(timeout=GEMINI_TIMEOUT) as http:
         for _ in range(MAX_STEPS):
-            r, problems = await _call_gemini(http, key, contents)
+            r, problems = await _call_gemini(http, key, contents, currency)
             if r is None:
                 return {"reply": "", "steps": steps, "history": history or [],
                         "error": {"error": "The AI assistant did not answer. Try again in a moment.",

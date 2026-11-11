@@ -115,6 +115,7 @@ def log(kind: str, text: str):
 class AgentRequest(BaseModel):
     message: str
     history: list = []
+    currency: str = "USD"
 
 
 @app.post("/api/agent")
@@ -122,7 +123,9 @@ async def agent(req: AgentRequest):
     if not req.message.strip():
         raise HTTPException(400, "Message is empty")
     try:
-        out = await run_agent(paypal, req.message.strip(), req.history)
+        cur = req.currency.strip().upper()
+        out = await run_agent(paypal, req.message.strip(), req.history,
+                              cur if len(cur) == 3 and cur.isalpha() else "USD")
     except Exception as e:  # show the cause in the UI instead of a bare 500
         raise HTTPException(500, {"error": "Something went wrong in the app.", "code": "APP_ERROR",
                                   "raw": f"{type(e).__name__}: {e}"})
