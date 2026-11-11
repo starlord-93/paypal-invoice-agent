@@ -7,6 +7,7 @@ from datetime import date, timedelta
 import httpx
 
 from .paypal import PayPalError
+from .reminders import policy
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 MAX_STEPS = 8
@@ -25,6 +26,9 @@ Rules:
   all mean send. If the user only asks for a draft, do not send.
 - For reminders: call list_invoices, select invoices with status SENT or PARTIALLY_PAID that are unpaid, and call
   send_reminder for each with a short, polite, specific note. Do not remind for DRAFT, PAID or CANCELLED invoices.
+- Anti-spam policy: each invoice in list_invoices has a reminder_state. Call send_reminder only when it is "ready".
+  "cooldown" means a reminder or the invoice itself was sent a short time ago. "limit" means the maximum is reached.
+  If send_reminder returns skipped, do not try again. Tell the user which invoices were skipped and why.
 - After tool calls, reply in 1 to 3 short sentences. State what you did, the invoice number, the total and the status.
 - Never claim an action that a tool did not confirm.
 """
@@ -99,13 +103,20 @@ async def run_tool(paypal, name: str, args: dict) -> dict:
                 args["client_name"], args["client_email"], args["items"],
                 (args.get("currency") or "USD").upper(), args.get("due_date"), args.get("note"))
         if name == "send_invoice":
-            return await paypal.send_invoice(args["invoice_id"])
+            inv = await paypal.send_invoice(args["invoice_id"])
+            policy.record_sent(args["invoice_id"])
+            return inv
         if name == "list_invoices":
-            return {"invoices": await paypal.list_invoices()}
+            return {"invoices": [policy.annotate(i) for i in await paypal.list_invoices()]}
         if name == "get_invoice":
             return await paypal.get_invoice(args["invoice_id"])
         if name == "send_reminder":
-            return await paypal.send_reminder(args["invoice_id"], args["subject"], args["note"])
+            allowed, reason = policy.check(args["invoice_id"])
+            if not allowed:
+                return {"invoice_id": args["invoice_id"], "reminder_sent": False, "skipped": True, "reason": reason}
+            out = await paypal.send_reminder(args["invoice_id"], args["subject"], args["note"])
+            policy.record_reminder(args["invoice_id"])
+            return out
         return {"error": f"Unknown tool {name}"}
     except (PayPalError, KeyError, ValueError, TypeError) as e:
         return {"error": str(e)}
@@ -203,8 +214,9 @@ async def _mock_agent(paypal, message: str) -> dict:
             if i["status"] in ("SENT", "PARTIALLY_PAID"):
                 args = {"invoice_id": i["id"], "subject": f"Reminder: invoice {i['number']}",
                         "note": "A friendly reminder that this invoice is open."}
-                steps.append({"tool": "send_reminder", "args": args, "result": await run_tool(paypal, "send_reminder", args)})
-                n += 1
+                res = await run_tool(paypal, "send_reminder", args)
+                steps.append({"tool": "send_reminder", "args": args, "result": res})
+                n += 1 if res.get("reminder_sent") else 0
         return {"reply": f"Sent {n} reminder(s).", "steps": steps, "history": []}
     email = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", message)
     m = re.search(r"(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|x)\s*(?:at|@)?\s*\$?(\d+(?:\.\d+)?)", low)

@@ -31,6 +31,9 @@
   button.secondary { background:transparent; color:var(--accent); border:1px solid var(--accent); }
   button:disabled { opacity:.5; cursor:wait; }
   .row { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+  .auto { display:flex; gap:8px; align-items:flex-start; margin-top:10px; font-size:13px; cursor:pointer; }
+  .auto input { width:18px; height:18px; margin:1px 0 0; accent-color:var(--accent); }
+  .policy { font-size:12px; color:var(--muted); margin-top:4px; }
   .examples { margin-top:10px; font-size:13px; color:var(--muted); }
   .examples a { display:block; color:var(--accent); cursor:pointer; margin-top:4px; }
   .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:12px; }
@@ -71,6 +74,8 @@
       <button id="sendBtn">Ask agent</button>
       <button id="chaseBtn" class="secondary" title="The agent finds unpaid invoices and sends reminders">Chase unpaid invoices</button>
     </div>
+    <label class="auto"><input type="checkbox" id="autoChk"> <span>Auto-chase: the agent checks every minute and reminds when the cooldown ends</span></label>
+    <div class="policy" id="policy"></div>
     <div class="examples">Try:
       <a>Website bug fixes for Maya Lee (maya@example.com): 5 hours at $60 and 1 hosting setup at $120. Send it, due in 7 days.</a>
       <a>Draft an invoice for John Park (john@example.com), 2 consulting sessions at $150 each.</a>
@@ -117,6 +122,7 @@ function fitColumns() {
   const w = window.innerWidth;
   gridApi.setColumnsVisible(['currency', 'total'], w > 600);
   gridApi.setColumnsVisible(['number', 'due_date'], w > 480);
+  gridApi.setColumnsVisible(['reminder'], w > 760);
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
@@ -181,6 +187,15 @@ async function sendInvoice(id) {
 }
 function alertMsg(t) { addMsg('bot', 'Error: ' + t); }
 
+function reminderText(d) {
+  if (!d.reminder_state) return '';
+  const used = d.reminder_count + '/' + d.reminder_max;
+  if (d.reminder_state === 'limit') return 'Limit reached (' + used + ')';
+  if (d.reminder_state === 'ready') return 'Ready (' + used + ' sent)';
+  const mins = Math.max(1, Math.ceil((new Date(d.next_reminder_at) - Date.now()) / 60000));
+  return 'In ' + (mins >= 60 ? Math.floor(mins / 60) + ' h ' + (mins % 60) + ' min' : mins + ' min') + ' (' + used + ' sent)';
+}
+
 const money = p => p.value == null ? '' : Number(p.value).toFixed(2);
 
 function initGrid() {
@@ -194,6 +209,9 @@ function initGrid() {
       { field: 'due_amount', headerName: 'Due', width: 110, type: 'rightAligned', valueFormatter: money },
       { field: 'currency', headerName: 'Cur.', width: 80 },
       { field: 'due_date', headerName: 'Due date', width: 140, sort: 'desc' },
+      { headerName: 'Next reminder', colId: 'reminder', width: 170, sortable: false,
+        valueGetter: p => reminderText(p.data),
+        tooltipValueGetter: p => p.data.last_reminder ? 'Last reminder: ' + new Date(p.data.last_reminder).toLocaleString() : 'No reminder sent yet' },
       { headerName: 'Action', width: 110, sortable: false, pinned: 'right', colId: 'action',
         cellRenderer: p => {
           const d = p.data;
@@ -252,7 +270,16 @@ $('themeBtn').onclick = () => {
 initGrid();
 fitColumns();
 window.addEventListener('resize', fitColumns);
-api('/api/config').then(c => { $('mode').textContent = 'PayPal: ' + c.paypal_mode + ' · AI: ' + c.agent_mode; });
+api('/api/config').then(c => {
+  $('mode').textContent = 'PayPal: ' + c.paypal_mode + ' · AI: ' + c.agent_mode;
+  $('autoChk').checked = c.auto_chase;
+  $('policy').textContent = 'Anti-spam policy: 1 reminder per invoice every ' + c.cooldown_minutes + ' min, maximum ' + c.reminder_max + ' per invoice.';
+});
+$('autoChk').onchange = async e => {
+  try { await api('/api/autochase', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: e.target.checked }) }); }
+  catch (err) { e.target.checked = !e.target.checked; alertMsg(err.message); }
+  refresh();
+};
 refresh();
 setInterval(refresh, 8000);
 </script>

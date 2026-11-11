@@ -12,14 +12,17 @@ Built for the PayPal AI Hackathon.
 2. **Acts through PayPal.** The agent calls PayPal tools to create and send a real invoice (PayPal Invoicing API v2, sandbox).
 3. **Shows the money.** A live table (AG Grid) shows each invoice, its status, the amount due and the pay link.
 4. **Follows up.** One click on "Chase unpaid invoices" lets the agent find unpaid invoices and send a polite reminder for each.
-5. **Receives PayPal webhooks.** Payment events show in the activity feed.
+5. **Does not spam clients.** The server allows one reminder per invoice per cooldown period and a maximum number of reminders per invoice. The AI agent cannot go around this rule. The table shows when the next reminder is allowed.
+6. **Auto-chase.** One switch lets the agent work alone: it checks every minute and sends a reminder when an invoice is unpaid and its cooldown has ended.
+7. **Receives PayPal webhooks.** Payment events show in the activity feed.
+8. **Works on phone, tablet and desktop**, with a light and a dark mode.
 
 ## How PayPal and AI are used
 
 | Part | Technology |
 |---|---|
-| AI agent | Google Gemini with function calling. The model selects the tools. The server runs them. |
-| Agent tools | `create_invoice`, `send_invoice`, `list_invoices`, `get_invoice`, `send_reminder` |
+| AI agent | Google Gemini with function calling. The model selects the tools. The server runs them. The app tries a list of models in order until one answers. |
+| Agent tools | `create_invoice`, `send_invoice`, `list_invoices`, `get_invoice`, `send_reminder` (guarded by the anti-spam policy) |
 | PayPal | OAuth 2.0, Invoicing API v2 (create, send, list, remind), Webhooks with signature verification |
 | UI | Plain HTML and JavaScript with AG Grid Community |
 | Server | Python, FastAPI |
@@ -79,12 +82,14 @@ In the PayPal dashboard, add a webhook for your app with the URL `https://YOUR-H
 app/main.py     API routes and webhook endpoint
 app/agent.py    Agent loop, tool definitions, system prompt
 app/paypal.py   PayPal client and mock client
+app/reminders.py  Anti-spam policy for reminders
 static/         Web UI
 ```
 
 ## Security notes
 
 - Secrets are read from environment variables only. Do not commit `.env`.
+- Reminder limits: `REMINDER_COOLDOWN_MINUTES` (default 60) and `REMINDER_MAX` (default 3) in `.env`. For a quick demo, set the cooldown to 1.
 - The agent sends an invoice only when the user asks for it. Drafts can also be sent with the "Send" button.
 - This project is for the PayPal sandbox. Add user login before any production use.
 
