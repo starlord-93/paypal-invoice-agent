@@ -12,7 +12,18 @@ LIVE = "https://api-m.paypal.com"
 
 
 class PayPalError(Exception):
-    pass
+    """str(e) is the raw technical text. `friendly` is a short message for the end user."""
+
+    def __init__(self, raw, friendly=None, code=None, debug_id=None, status=None):
+        super().__init__(raw)
+        self.friendly = friendly or "PayPal could not complete this action."
+        self.code = code
+        self.debug_id = debug_id
+        self.status = status
+
+    def as_dict(self) -> dict:
+        return {"error": self.friendly, "code": self.code, "debug_id": self.debug_id,
+                "status": self.status, "raw": str(self)}
 
 
 class PayPalClient:
@@ -30,14 +41,17 @@ class PayPalClient:
         if self._token and time.time() < self._token_exp - 60:
             return self._token
         if not (self.client_id and self.secret):
-            raise PayPalError("PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET are not set")
+            raise PayPalError("PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET are not set",
+                              friendly="The app is not connected to PayPal.", code="NOT_CONFIGURED")
         r = await self.http.post(
             f"{self.base}/v1/oauth2/token",
             auth=(self.client_id, self.secret),
             data={"grant_type": "client_credentials"},
         )
         if r.status_code != 200:
-            raise PayPalError(f"PayPal auth failed ({r.status_code}): {r.text[:300]}")
+            raise PayPalError(f"PayPal auth failed ({r.status_code}): {r.text[:300]}",
+                              friendly="PayPal did not accept the app credentials.", code="AUTH_FAILED",
+                              status=r.status_code)
         body = r.json()
         self._token = body["access_token"]
         self._token_exp = time.time() + int(body.get("expires_in", 3000))
@@ -49,7 +63,18 @@ class PayPalClient:
         h.update(headers or {})
         r = await self.http.request(method, f"{self.base}{path}", json=json, params=params, headers=h)
         if r.status_code >= 400:
-            raise PayPalError(f"PayPal {method} {path} failed ({r.status_code}): {r.text[:500]}")
+            friendly = code = debug_id = None
+            try:
+                err = r.json()
+                first = (err.get("details") or [{}])[0]
+                friendly = first.get("description") or err.get("message")
+                code = first.get("issue") or err.get("name")
+                debug_id = err.get("debug_id")
+            except ValueError:
+                pass
+            raise PayPalError(f"PayPal {method} {path} failed ({r.status_code}): {r.text[:1500]}",
+                              friendly=friendly, code=code or f"HTTP_{r.status_code}",
+                              debug_id=debug_id, status=r.status_code)
         return r.json() if r.content else {}
 
     async def create_invoice(self, client_name, client_email, items, currency="USD",
@@ -108,6 +133,11 @@ class PayPalClient:
 
         await asyncio.gather(*(fill(i) for i in open_ones))
         return invoices
+
+    async def delete_invoice(self, invoice_id: str) -> dict:
+        """Deletes a draft invoice. PayPal does not delete sent invoices."""
+        await self._call("DELETE", f"/v2/invoicing/invoices/{invoice_id}")
+        return {"invoice_id": invoice_id, "deleted": True}
 
     async def send_reminder(self, invoice_id: str, subject: str, note: str) -> dict:
         await self._call("POST", f"/v2/invoicing/invoices/{invoice_id}/remind",
@@ -197,6 +227,13 @@ class MockPayPal:
     async def verify_webhook(self, headers, event):
         return True
 
+    async def delete_invoice(self, invoice_id):
+        if self._get(invoice_id)["status"] != "DRAFT":
+            raise PayPalError("Only a draft can be deleted", friendly="Only a draft invoice can be deleted.",
+                              code="NOT_A_DRAFT")
+        del self.invoices[invoice_id]
+        return {"invoice_id": invoice_id, "deleted": True}
+
     def mark_paid(self, invoice_id):
         inv = self._get(invoice_id)
         inv["status"] = "PAID"
@@ -205,7 +242,8 @@ class MockPayPal:
 
     def _get(self, invoice_id):
         if invoice_id not in self.invoices:
-            raise PayPalError(f"Invoice {invoice_id} not found")
+            raise PayPalError(f"Invoice {invoice_id} not found", friendly="This invoice was not found.",
+                              code="NOT_FOUND")
         return self.invoices[invoice_id]
 
 

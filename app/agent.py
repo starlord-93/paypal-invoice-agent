@@ -31,6 +31,8 @@ Rules:
   If send_reminder returns skipped, do not try again. Tell the user which invoices were skipped and why.
 - After tool calls, reply in 1 to 3 short sentences. State what you did, the invoice number, the total and the status.
 - Never claim an action that a tool did not confirm.
+- If a tool returns an error, explain it in one plain sentence for a non-technical user. Do not repeat raw
+  technical text, IDs or URLs. The app shows the error code separately.
 """
 
 TOOLS = [{
@@ -118,10 +120,13 @@ async def run_tool(paypal, name: str, args: dict) -> dict:
             policy.record_reminder(args["invoice_id"])
             return out
         return {"error": f"Unknown tool {name}"}
-    except (PayPalError, KeyError, ValueError, TypeError) as e:
-        return {"error": str(e)}
+    except PayPalError as e:
+        return e.as_dict()
+    except (KeyError, ValueError, TypeError) as e:
+        return {"error": "The request was not complete.", "code": "BAD_TOOL_INPUT", "raw": f"{type(e).__name__}: {e}"}
     except httpx.HTTPError as e:
-        return {"error": f"Network error on PayPal call ({type(e).__name__}: {e})"}
+        return {"error": "PayPal did not answer. Try again in a moment.", "code": "NETWORK_ERROR",
+                "raw": f"{type(e).__name__}: {e}"}
 
 
 GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "25"))
@@ -173,7 +178,9 @@ async def run_agent(paypal, message: str, history: list | None = None) -> dict:
 
     key = os.getenv("GEMINI_API_KEY")
     if not key:
-        return {"reply": "GEMINI_API_KEY is not set on the server.", "steps": [], "history": history or []}
+        return {"reply": "", "steps": [], "history": history or [],
+                "error": {"error": "The AI assistant is not set up.", "code": "AI_NOT_CONFIGURED",
+                          "raw": "GEMINI_API_KEY is not set on the server."}}
     contents = list(history or []) + [{"role": "user", "parts": [{"text": message}]}]
     steps = []
 
@@ -181,8 +188,9 @@ async def run_agent(paypal, message: str, history: list | None = None) -> dict:
         for _ in range(MAX_STEPS):
             r, problems = await _call_gemini(http, key, contents)
             if r is None:
-                return {"reply": "No AI model answered. " + " | ".join(problems),
-                        "steps": steps, "history": history or []}
+                return {"reply": "", "steps": steps, "history": history or [],
+                        "error": {"error": "The AI assistant did not answer. Try again in a moment.",
+                                  "code": "AI_UNAVAILABLE", "raw": " | ".join(problems)}}
             cands = r.json().get("candidates") or []
             content = (cands[0].get("content") if cands else None) or {"role": "model", "parts": []}
             parts = content.get("parts") or []

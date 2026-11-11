@@ -74,6 +74,10 @@ app = FastAPI(title="PayMeBot", lifespan=lifespan)
 STATIC = Path(__file__).resolve().parent.parent / "static"
 
 
+def pp_http(e: PayPalError) -> HTTPException:
+    return HTTPException(502, e.as_dict())
+
+
 def log(kind: str, text: str):
     events.appendleft({"time": datetime.now(timezone.utc).isoformat(), "kind": kind, "text": text})
 
@@ -90,7 +94,8 @@ async def agent(req: AgentRequest):
     try:
         out = await run_agent(paypal, req.message.strip(), req.history)
     except Exception as e:  # show the cause in the UI instead of a bare 500
-        raise HTTPException(500, f"{type(e).__name__}: {e}")
+        raise HTTPException(500, {"error": "Something went wrong in the app.", "code": "APP_ERROR",
+                                  "raw": f"{type(e).__name__}: {e}"})
     for s in out["steps"]:
         ok = "error" not in (s["result"] or {})
         log("agent", f"{s['tool']} {'succeeded' if ok else 'failed'}")
@@ -102,7 +107,7 @@ async def invoices():
     try:
         return {"invoices": [policy.annotate(i) for i in await paypal.list_invoices()]}
     except PayPalError as e:
-        raise HTTPException(502, str(e))
+        raise pp_http(e)
 
 
 @app.post("/api/invoices/{invoice_id}/send")
@@ -110,10 +115,20 @@ async def send(invoice_id: str):
     try:
         inv = await paypal.send_invoice(invoice_id)
     except PayPalError as e:
-        raise HTTPException(502, str(e))
+        raise pp_http(e)
     policy.record_sent(invoice_id)
     log("user", f"Invoice {inv['number']} sent")
     return inv
+
+
+@app.delete("/api/invoices/{invoice_id}")
+async def delete(invoice_id: str):
+    try:
+        out = await paypal.delete_invoice(invoice_id)
+    except PayPalError as e:
+        raise pp_http(e)
+    log("user", "Draft invoice deleted")
+    return out
 
 
 @app.post("/api/chase")
@@ -122,7 +137,7 @@ async def chase():
     try:
         return await run_chase("agent")
     except PayPalError as e:
-        raise HTTPException(502, str(e))
+        raise pp_http(e)
 
 
 class AutoChase(BaseModel):
@@ -143,7 +158,7 @@ async def webhook(request: Request):
         if not await paypal.verify_webhook(request.headers, event):
             raise HTTPException(400, "Webhook signature is not valid")
     except PayPalError as e:
-        raise HTTPException(502, str(e))
+        raise pp_http(e)
     kind = event.get("event_type", "")
     res = event.get("resource", {})
     inv = res.get("invoice", res)
@@ -159,7 +174,8 @@ async def get_events():
 
 @app.get("/api/config")
 async def config():
-    return {"auto_chase": auto["enabled"], "cooldown_minutes": policy.cooldown_s / 60,
+    return {"support_url": os.getenv("SUPPORT_URL", "https://github.com/starlord-93/paypal-invoice-agent/issues/new"),
+            "auto_chase": auto["enabled"], "cooldown_minutes": policy.cooldown_s / 60,
             "reminder_max": policy.max_reminders,
             "paypal_mode": "mock" if isinstance(paypal, MockPayPal) else os.getenv("PAYPAL_ENV", "sandbox"),
             "agent_mode": "mock" if os.getenv("AGENT_MOCK") == "1" else (agent_mod._working_model or agent_mod.model_chain()[0])}
