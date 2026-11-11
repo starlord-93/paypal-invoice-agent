@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PayMeBot: invoice-to-cash agent</title>
+<script src="https://cdn.jsdelivr.net/npm/ag-grid-community@33/dist/ag-grid-community.min.js"></script>
+<style>
+  :root { --ink:#14213d; --muted:#5c677d; --line:#e3e7ee; --bg:#f6f7fb; --card:#fff; --accent:#0b57d0; --ok:#137333; --warn:#b06000; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--ink); background:var(--bg); }
+  header { display:flex; align-items:center; gap:12px; padding:14px 24px; background:var(--card); border-bottom:1px solid var(--line); }
+  header h1 { font-size:18px; margin:0; }
+  header .tag { color:var(--muted); font-size:13px; }
+  header .mode { margin-left:auto; font-size:12px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:3px 10px; }
+  main { display:grid; grid-template-columns: 380px 1fr; gap:16px; padding:16px 24px; max-width:1400px; margin:0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  h2 { font-size:14px; margin:0 0 10px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  #chat { height:340px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; margin-bottom:10px; }
+  .msg { padding:8px 12px; border-radius:10px; max-width:92%; white-space:pre-wrap; }
+  .msg.user { align-self:flex-end; background:var(--accent); color:#fff; }
+  .msg.bot { align-self:flex-start; background:#eef2f9; }
+  .msg.tool { align-self:flex-start; font:12px ui-monospace, monospace; color:var(--muted); background:none; padding:0 4px; }
+  textarea { width:100%; min-height:70px; padding:10px; border:1px solid var(--line); border-radius:8px; font:inherit; resize:vertical; }
+  button { font:inherit; border:0; border-radius:8px; padding:9px 14px; cursor:pointer; background:var(--accent); color:#fff; }
+  button.secondary { background:#fff; color:var(--accent); border:1px solid var(--accent); }
+  button:disabled { opacity:.5; cursor:wait; }
+  .row { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+  .examples { margin-top:10px; font-size:13px; color:var(--muted); }
+  .examples a { display:block; color:var(--accent); cursor:pointer; margin-top:4px; }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:12px; }
+  .stat b { display:block; font-size:22px; }
+  .stat span { color:var(--muted); font-size:13px; }
+  #grid { height:360px; }
+  .pill { padding:2px 9px; border-radius:999px; font-size:12px; font-weight:600; }
+  .pill.PAID, .pill.MARKED_AS_PAID { background:#e6f4ea; color:var(--ok); }
+  .pill.SENT, .pill.PARTIALLY_PAID, .pill.PAYMENT_PENDING { background:#fef3e0; color:var(--warn); }
+  .pill.DRAFT, .pill.CANCELLED { background:#eef0f4; color:var(--muted); }
+  #events { list-style:none; margin:0; padding:0; max-height:150px; overflow-y:auto; font-size:13px; }
+  #events li { padding:5px 0; border-bottom:1px solid var(--line); }
+  #events time { color:var(--muted); margin-right:8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>PayMeBot</h1>
+  <span class="tag">Tell it what you did. It bills the client through PayPal and follows up on payment.</span>
+  <span class="mode" id="mode"></span>
+</header>
+<main>
+  <section class="card">
+    <h2>Agent</h2>
+    <div id="chat"></div>
+    <textarea id="input" placeholder="Example: Logo design for Ravi Kumar (ravi@example.com), 3 hours at $40. Send it, due Friday."></textarea>
+    <div class="row">
+      <button id="sendBtn">Ask agent</button>
+      <button id="chaseBtn" class="secondary" title="The agent finds unpaid invoices and sends reminders">Chase unpaid invoices</button>
+    </div>
+    <div class="examples">Try:
+      <a>Website bug fixes for Maya Lee (maya@example.com): 5 hours at $60 and 1 hosting setup at $120. Send it, due in 7 days.</a>
+      <a>Draft an invoice for John Park (john@example.com), 2 consulting sessions at $150 each.</a>
+      <a>Which clients have not paid me?</a>
+    </div>
+  </section>
+  <section>
+    <div class="stats">
+      <div class="card stat"><b id="sOut">0.00</b><span>Outstanding</span></div>
+      <div class="card stat"><b id="sPaid">0.00</b><span>Paid</span></div>
+      <div class="card stat"><b id="sCount">0</b><span>Invoices</span></div>
+    </div>
+    <div class="card">
+      <h2>Invoices (live from PayPal)</h2>
+      <div id="grid"></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h2>Activity</h2>
+      <ul id="events"><li>No activity yet.</li></ul>
+    </div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let history = [];
+let gridApi;
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+
+function addMsg(kind, text) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + kind;
+  d.textContent = text;
+  $('chat').appendChild(d);
+  $('chat').scrollTop = $('chat').scrollHeight;
+  return d;
+}
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  return r.json();
+}
+
+function setBusy(b) { $('sendBtn').disabled = b; $('chaseBtn').disabled = b; }
+
+function showSteps(steps) {
+  for (const s of steps) {
+    const failed = s.result && s.result.error;
+    addMsg('tool', (failed ? '✗ ' : '✓ ') + 'PayPal tool: ' + s.tool + (failed ? ' (' + s.result.error + ')' : ''));
+  }
+}
+
+async function ask(message) {
+  addMsg('user', message);
+  const wait = addMsg('bot', 'Working...');
+  setBusy(true);
+  try {
+    const out = await api('/api/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, history }) });
+    wait.remove();
+    showSteps(out.steps);
+    addMsg('bot', out.reply);
+    history = out.history || [];
+  } catch (e) { wait.textContent = 'Error: ' + e.message; }
+  setBusy(false);
+  refresh();
+}
+
+async function chase() {
+  addMsg('user', 'Chase unpaid invoices');
+  const wait = addMsg('bot', 'Checking invoices...');
+  setBusy(true);
+  try {
+    const out = await api('/api/chase', { method: 'POST' });
+    wait.remove();
+    showSteps(out.steps);
+    addMsg('bot', out.reply);
+  } catch (e) { wait.textContent = 'Error: ' + e.message; }
+  setBusy(false);
+  refresh();
+}
+
+async function sendInvoice(id) {
+  try { await api('/api/invoices/' + id + '/send', { method: 'POST' }); } catch (e) { alertMsg(e.message); }
+  refresh();
+}
+function alertMsg(t) { addMsg('bot', 'Error: ' + t); }
+
+const money = p => p.value == null ? '' : Number(p.value).toFixed(2);
+
+function initGrid() {
+  gridApi = agGrid.createGrid($('grid'), {
+    columnDefs: [
+      { field: 'number', headerName: 'No.', width: 90 },
+      { field: 'client_name', headerName: 'Client', flex: 1, minWidth: 140, filter: true },
+      { field: 'status', width: 150, filter: true,
+        cellRenderer: p => '<span class="pill ' + esc(p.value) + '">' + esc(p.value) + '</span>' },
+      { field: 'total', width: 110, type: 'rightAligned', valueFormatter: money },
+      { field: 'due_amount', headerName: 'Due', width: 110, type: 'rightAligned', valueFormatter: money },
+      { field: 'currency', headerName: 'Cur.', width: 80 },
+      { field: 'due_date', headerName: 'Due date', width: 120, sort: 'desc' },
+      { headerName: 'Action', width: 130, sortable: false,
+        cellRenderer: p => {
+          const d = p.data;
+          if (d.status === 'DRAFT') {
+            const b = document.createElement('button');
+            b.textContent = 'Send'; b.className = 'secondary'; b.style.padding = '2px 10px';
+            b.onclick = () => sendInvoice(d.id);
+            return b;
+          }
+          if (d.pay_url && d.due_amount > 0) {
+            const a = document.createElement('a');
+            a.href = d.pay_url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Pay link';
+            return a;
+          }
+          return '';
+        } },
+    ],
+    rowData: [],
+    defaultColDef: { sortable: true, resizable: true },
+    getRowId: p => p.data.id,
+    overlayNoRowsTemplate: 'No invoices yet. Ask the agent to create one.',
+  });
+}
+
+async function refresh() {
+  try {
+    const { invoices } = await api('/api/invoices');
+    gridApi.setGridOption('rowData', invoices);
+    const open = invoices.filter(i => ['SENT', 'PARTIALLY_PAID', 'PAYMENT_PENDING'].includes(i.status));
+    const paid = invoices.filter(i => ['PAID', 'MARKED_AS_PAID'].includes(i.status));
+    $('sOut').textContent = open.reduce((s, i) => s + i.due_amount, 0).toFixed(2);
+    $('sPaid').textContent = paid.reduce((s, i) => s + i.total, 0).toFixed(2);
+    $('sCount').textContent = invoices.length;
+  } catch (e) { /* shown on next agent call */ }
+  try {
+    const { events } = await api('/api/events');
+    if (events.length) {
+      $('events').innerHTML = events.map(e =>
+        '<li><time>' + new Date(e.time).toLocaleTimeString() + '</time><b>' + esc(e.kind) + '</b> ' + esc(e.text) + '</li>').join('');
+    }
+  } catch (e) {}
+}
+
+$('sendBtn').onclick = () => { const v = $('input').value.trim(); if (v) { $('input').value = ''; ask(v); } };
+$('chaseBtn').onclick = chase;
+$('input').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('sendBtn').click(); });
+document.querySelectorAll('.examples a').forEach(a => a.onclick = () => { $('input').value = a.textContent; $('input').focus(); });
+
+initGrid();
+api('/api/config').then(c => { $('mode').textContent = 'PayPal: ' + c.paypal_mode + ' · AI: ' + c.agent_mode; });
+refresh();
+setInterval(refresh, 8000);
+</script>
+</body>
+</html>

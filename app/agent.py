@@ -1,0 +1,190 @@
+"""The AI agent. Gemini decides which PayPal tools to call; this module runs them."""
+import json
+import os
+import re
+from datetime import date, timedelta
+
+import httpx
+
+from .paypal import PayPalError
+
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+MAX_STEPS = 8
+
+SYSTEM = """You are PayMeBot, an invoice-to-cash agent for freelancers. You act through PayPal tools.
+Today is {today}.
+
+Rules:
+- When the user describes finished work, create a draft invoice with create_invoice.
+  Calculate nothing yourself: give quantity and unit price per line item. PayPal calculates totals.
+- Change relative dates ("Friday", "in 2 weeks") to YYYY-MM-DD. If no due date is given, use 14 days from today.
+- Default currency is USD unless the user gives a different one.
+- Create an invoice only when you have the client name, client email, and one or more line items with a price.
+  If one of these is missing, ask one short question. Do not invent an email address or a price.
+- Send an invoice (send_invoice) only when the user tells you to send it. "Bill", "send" and "invoice and send"
+  all mean send. If the user only asks for a draft, do not send.
+- For reminders: call list_invoices, select invoices with status SENT or PARTIALLY_PAID that are unpaid, and call
+  send_reminder for each with a short, polite, specific note. Do not remind for DRAFT, PAID or CANCELLED invoices.
+- After tool calls, reply in 1 to 3 short sentences. State what you did, the invoice number, the total and the status.
+- Never claim an action that a tool did not confirm.
+"""
+
+TOOLS = [{
+    "function_declarations": [
+        {
+            "name": "create_invoice",
+            "description": "Create a draft PayPal invoice. Does not send it.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "client_name": {"type": "string"},
+                    "client_email": {"type": "string"},
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "description": "Work done, for example 'Logo design (hours)'"},
+                                "quantity": {"type": "number"},
+                                "unit_amount": {"type": "number", "description": "Price for one unit"},
+                            },
+                            "required": ["name", "quantity", "unit_amount"],
+                        },
+                    },
+                    "currency": {"type": "string", "description": "ISO 4217 code, for example USD"},
+                    "due_date": {"type": "string", "description": "YYYY-MM-DD"},
+                    "note": {"type": "string", "description": "Short note to the client"},
+                },
+                "required": ["client_name", "client_email", "items"],
+            },
+        },
+        {
+            "name": "send_invoice",
+            "description": "Send a draft invoice to the client through PayPal. The client gets a payment link.",
+            "parameters": {"type": "object", "properties": {"invoice_id": {"type": "string"}},
+                           "required": ["invoice_id"]},
+        },
+        {
+            "name": "list_invoices",
+            "description": "List recent invoices with status, client, total, amount due and due date.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "get_invoice",
+            "description": "Get the current status and details of one invoice.",
+            "parameters": {"type": "object", "properties": {"invoice_id": {"type": "string"}},
+                           "required": ["invoice_id"]},
+        },
+        {
+            "name": "send_reminder",
+            "description": "Send a payment reminder for an unpaid, sent invoice.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "invoice_id": {"type": "string"},
+                    "subject": {"type": "string"},
+                    "note": {"type": "string", "description": "Polite reminder text to the client"},
+                },
+                "required": ["invoice_id", "subject", "note"],
+            },
+        },
+    ]
+}]
+
+
+async def run_tool(paypal, name: str, args: dict) -> dict:
+    try:
+        if name == "create_invoice":
+            return await paypal.create_invoice(
+                args["client_name"], args["client_email"], args["items"],
+                (args.get("currency") or "USD").upper(), args.get("due_date"), args.get("note"))
+        if name == "send_invoice":
+            return await paypal.send_invoice(args["invoice_id"])
+        if name == "list_invoices":
+            return {"invoices": await paypal.list_invoices()}
+        if name == "get_invoice":
+            return await paypal.get_invoice(args["invoice_id"])
+        if name == "send_reminder":
+            return await paypal.send_reminder(args["invoice_id"], args["subject"], args["note"])
+        return {"error": f"Unknown tool {name}"}
+    except (PayPalError, KeyError, ValueError, TypeError) as e:
+        return {"error": str(e)}
+
+
+async def run_agent(paypal, message: str, history: list | None = None) -> dict:
+    """Run one user turn. Returns the reply, the tool trace and the updated history."""
+    if os.getenv("AGENT_MOCK") == "1":
+        return await _mock_agent(paypal, message)
+
+    key = os.getenv("GEMINI_API_KEY")
+    if not key:
+        return {"reply": "GEMINI_API_KEY is not set on the server.", "steps": [], "history": history or []}
+    model = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+    contents = list(history or []) + [{"role": "user", "parts": [{"text": message}]}]
+    steps = []
+
+    async with httpx.AsyncClient(timeout=60) as http:
+        for _ in range(MAX_STEPS):
+            r = await http.post(
+                GEMINI_URL.format(model=model),
+                headers={"x-goog-api-key": key},
+                json={
+                    "system_instruction": {"parts": [{"text": SYSTEM.format(today=date.today().isoformat())}]},
+                    "contents": contents,
+                    "tools": TOOLS,
+                    "generationConfig": {"temperature": 0.2},
+                },
+            )
+            if r.status_code != 200:
+                return {"reply": f"The AI model returned an error ({r.status_code}): {r.text[:300]}",
+                        "steps": steps, "history": history or []}
+            cands = r.json().get("candidates") or []
+            content = (cands[0].get("content") if cands else None) or {"role": "model", "parts": []}
+            parts = content.get("parts") or []
+            # Keep the model turn unchanged. Some models need their own parts sent back as-is.
+            contents.append({"role": "model", "parts": parts})
+            calls = [p["functionCall"] for p in parts if "functionCall" in p]
+            if not calls:
+                text = "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
+                return {"reply": text or "Done.", "steps": steps, "history": contents}
+            responses = []
+            for c in calls:
+                result = await run_tool(paypal, c["name"], c.get("args") or {})
+                steps.append({"tool": c["name"], "args": c.get("args") or {}, "result": result})
+                responses.append({"functionResponse": {"name": c["name"], "response": {"result": result}}})
+            contents.append({"role": "user", "parts": responses})
+
+    return {"reply": "I stopped because the task took too many steps.", "steps": steps, "history": contents}
+
+
+async def _mock_agent(paypal, message: str) -> dict:
+    """Rule-based stand-in for offline tests. Not used when a Gemini key is set."""
+    steps = []
+    low = message.lower()
+    if "remind" in low or "chase" in low:
+        invs = await paypal.list_invoices()
+        steps.append({"tool": "list_invoices", "args": {}, "result": {"count": len(invs)}})
+        n = 0
+        for i in invs:
+            if i["status"] in ("SENT", "PARTIALLY_PAID"):
+                args = {"invoice_id": i["id"], "subject": f"Reminder: invoice {i['number']}",
+                        "note": "A friendly reminder that this invoice is open."}
+                steps.append({"tool": "send_reminder", "args": args, "result": await run_tool(paypal, "send_reminder", args)})
+                n += 1
+        return {"reply": f"Sent {n} reminder(s).", "steps": steps, "history": []}
+    email = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", message)
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|x)\s*(?:at|@)?\s*\$?(\d+(?:\.\d+)?)", low)
+    if not email or not m:
+        return {"reply": "I need the client email and the work with a price.", "steps": [], "history": []}
+    name = re.search(r"for ([A-Z][a-z]+(?: [A-Z][a-z]+)?)", message)
+    args = {"client_name": name.group(1) if name else "Client", "client_email": email.group(0),
+            "items": [{"name": message.split(" for ")[0][:60], "quantity": float(m.group(1)),
+                       "unit_amount": float(m.group(2))}],
+            "currency": "USD", "due_date": (date.today() + timedelta(days=14)).isoformat()}
+    inv = await run_tool(paypal, "create_invoice", args)
+    steps.append({"tool": "create_invoice", "args": args, "result": inv})
+    if "send" in low or "bill" in low:
+        inv = await run_tool(paypal, "send_invoice", {"invoice_id": inv["id"]})
+        steps.append({"tool": "send_invoice", "args": {"invoice_id": inv["id"]}, "result": inv})
+    return {"reply": f"Invoice {inv['number']} for {inv['currency']} {inv['total']:.2f} is {inv['status']}.",
+            "steps": steps, "history": []}
