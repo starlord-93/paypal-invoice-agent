@@ -30,7 +30,7 @@
   .switch input:checked + .track::after { transform:translateX(16px); }
   .switch input:focus-visible + .track { outline:2px solid var(--accent); outline-offset:2px; }
 
-  main { display:grid; grid-template-columns: 400px 1fr; gap:16px; padding:16px 24px; max-width:1500px; margin:0 auto; }
+  main { display:grid; grid-template-columns: 340px 1fr; gap:16px; padding:16px 24px; max-width:1500px; margin:0 auto; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; min-width:0; }
   h2 { font-size:13px; margin:0 0 10px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
   #chat { height:340px; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; gap:8px; margin-bottom:10px; }
@@ -62,7 +62,7 @@
   .stat b { display:block; font-size:22px; }
   .stat span { color:var(--muted); font-size:13px; }
   #grid { min-height:160px; }
-  .cellbtn { padding:0 10px; min-height:0; height:28px; line-height:26px; font-size:13px; margin-right:6px; }
+  .cellbtn { padding:0 8px; min-height:0; height:26px; line-height:24px; font-size:12px; margin-right:4px; }
   .cellbtn.danger { color:var(--err); border-color:var(--err); }
   .pill { padding:2px 9px; border-radius:999px; font-size:12px; font-weight:600; }
   .pill.PAID, .pill.MARKED_AS_PAID { background:var(--ok-bg); color:var(--ok); }
@@ -147,7 +147,7 @@ function savedTheme() { try { return localStorage.getItem('theme'); } catch (e) 
 function currentTheme() { return document.documentElement.dataset.theme || 'light'; }
 function gridTheme() {
   if (!agGrid.themeQuartz) return undefined;
-  return agGrid.themeQuartz.withPart(currentTheme() === 'dark' ? agGrid.colorSchemeDark : agGrid.colorSchemeLight);
+  return agGrid.themeQuartz.withPart(currentTheme() === 'dark' ? agGrid.colorSchemeDark : agGrid.colorSchemeLight).withParams({ spacing: 6 });
 }
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
@@ -158,7 +158,7 @@ function applyTheme(t) {
 function fitColumns() {
   if (!gridApi) return;
   const w = window.innerWidth;
-  gridApi.setColumnsVisible(['currency', 'total'], w > 600);
+  gridApi.setColumnsVisible(['total'], w > 600);
   gridApi.setColumnsVisible(['number', 'due_date'], w > 480);
   gridApi.setColumnsVisible(['reminder'], w > 760);
   autoSize();
@@ -264,10 +264,10 @@ async function invoiceAction(method, path, title) {
 function reminderText(d) {
   if (!d.reminder_state) return '';
   const used = d.reminder_count + '/' + d.reminder_max;
-  if (d.reminder_state === 'limit') return 'Limit reached (' + used + ')';
-  if (d.reminder_state === 'ready') return 'Ready (' + used + ' sent)';
+  if (d.reminder_state === 'limit') return 'Limit ' + used;
+  if (d.reminder_state === 'ready') return 'Ready · ' + used;
   const mins = Math.max(1, Math.ceil((new Date(d.next_reminder_at) - Date.now()) / 60000));
-  return 'In ' + (mins >= 60 ? Math.floor(mins / 60) + ' h ' + (mins % 60) + ' min' : mins + ' min') + ' (' + used + ' sent)';
+  return 'In ' + (mins >= 60 ? Math.floor(mins / 60) + ' h ' + (mins % 60) + ' min' : mins + ' min') + ' · ' + used;
 }
 
 function cellBtn(text, cls, onclick, title) {
@@ -288,7 +288,7 @@ function actionCell(p) {
     wrap.appendChild(del);
   } else if (d.pay_url && d.due_amount > 0) {
     const a = el('a', null, 'Pay link');
-    a.href = d.pay_url; a.target = '_blank'; a.rel = 'noopener'; a.style.marginRight = '10px';
+    a.href = d.pay_url; a.target = '_blank'; a.rel = 'noopener'; a.style.marginRight = '8px';
     wrap.appendChild(a);
     const share = cellBtn(navigator.share ? 'Share' : 'Copy', '', async () => {
       const text = 'Invoice ' + d.number + ' for ' + d.currency + ' ' + Number(d.due_amount).toFixed(2) + '. Pay here: ' + d.pay_url;
@@ -311,25 +311,25 @@ const textFilter = { filter: 'agTextColumnFilter',
 // The app sets the column widths from the content. The user can move columns but cannot resize them.
 function autoSize() {
   if (!gridApi) return;
-  gridApi.autoSizeColumns(['number', 'status', 'total', 'due_amount', 'currency', 'due_date', 'reminder']);
+  gridApi.autoSizeColumns(['number', 'status', 'total', 'due_amount', 'due_date', 'reminder']);
 }
 
 function initGrid() {
   gridApi = agGrid.createGrid($('grid'), {
     columnDefs: [
       { field: 'number', headerName: 'No.' },
-      { field: 'client_name', headerName: 'Client', flex: 1, minWidth: 150, ...textFilter,
+      { field: 'client_name', headerName: 'Client', flex: 1, minWidth: 120, ...textFilter,
         tooltipValueGetter: p => p.data.client_email },
       { field: 'status', ...textFilter,
         cellRenderer: p => '<span class="pill ' + esc(p.value) + '">' + esc(p.value) + '</span>' },
-      { field: 'total', type: 'rightAligned', valueFormatter: money },
+      { field: 'total', type: 'rightAligned', valueFormatter: p => (p.data.currency || '') + ' ' + money(p) },
       { field: 'due_amount', headerName: 'Due', type: 'rightAligned', valueFormatter: money },
-      { field: 'currency', headerName: 'Cur.' },
       { field: 'due_date', headerName: 'Due date' },
       { headerName: 'Next reminder', colId: 'reminder', sortable: false,
         valueGetter: p => reminderText(p.data),
+        headerTooltip: 'When the next reminder is allowed, and reminders sent of the maximum',
         tooltipValueGetter: p => p.data.last_reminder ? 'Last reminder: ' + new Date(p.data.last_reminder).toLocaleString() : 'No reminder sent yet' },
-      { headerName: 'Action', colId: 'action', width: 190, sortable: false, pinned: 'right',
+      { headerName: 'Action', colId: 'action', width: 168, sortable: false, pinned: 'right',
         suppressMovable: true, cellRenderer: actionCell },
     ],
     rowData: [],
