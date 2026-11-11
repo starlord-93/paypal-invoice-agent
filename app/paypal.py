@@ -116,9 +116,17 @@ class PayPalClient:
         return summarize(await self._call("GET", f"/v2/invoicing/invoices/{invoice_id}"))
 
     async def list_invoices(self) -> list:
-        data = await self._call("GET", "/v2/invoicing/invoices",
-                                params={"page_size": 50, "total_required": "true", "fields": "all"})
-        invoices = [summarize(i) for i in data.get("items", [])]
+        # Read all pages (100 per page, up to 500 invoices). The table shows 15 per page.
+        invoices = []
+        for page in range(1, 6):
+            data = await self._call("GET", "/v2/invoicing/invoices",
+                                    params={"page": page, "page_size": 100, "total_required": "true",
+                                            "fields": "all"})
+            items = data.get("items", [])
+            invoices += [summarize(i) for i in items]
+            if len(items) < 100 or len(invoices) >= int(data.get("total_items") or 0):
+                break
+        invoices.sort(key=lambda i: (i["invoice_date"] or "", i["number"] or ""), reverse=True)  # newest first
         # The list call does not return the pay link. Read it from the detail call for open invoices.
         open_ones = [i for i in invoices if not i["pay_url"]
                      and i["status"] in ("SENT", "PARTIALLY_PAID", "PAYMENT_PENDING")][:15]

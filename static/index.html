@@ -61,7 +61,7 @@
   .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:12px; }
   .stat b { display:block; font-size:22px; }
   .stat span { color:var(--muted); font-size:13px; }
-  #grid { height:360px; }
+  #grid { min-height:160px; }
   .cellbtn { padding:0 10px; min-height:0; height:28px; line-height:26px; font-size:13px; margin-right:6px; }
   .cellbtn.danger { color:var(--err); border-color:var(--err); }
   .pill { padding:2px 9px; border-radius:999px; font-size:12px; font-weight:600; }
@@ -77,7 +77,6 @@
     header .mode { display:none; }
     .stats { gap:8px; } .stat { padding:10px; } .stat b { font-size:17px; } .stat span { font-size:12px; }
     .row button { flex:1; }
-    #grid { height:320px; }
     textarea { font-size:16px; } /* stops zoom on focus in iOS */
   }
 </style>
@@ -162,6 +161,7 @@ function fitColumns() {
   gridApi.setColumnsVisible(['currency', 'total'], w > 600);
   gridApi.setColumnsVisible(['number', 'due_date'], w > 480);
   gridApi.setColumnsVisible(['reminder'], w > 760);
+  autoSize();
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
@@ -304,27 +304,46 @@ function actionCell(p) {
 
 const money = p => p.value == null ? '' : Number(p.value).toFixed(2);
 
+// One simple text filter with a "Clear filter" button inside the filter box.
+const textFilter = { filter: 'agTextColumnFilter',
+  filterParams: { filterOptions: ['contains'], maxNumConditions: 1, buttons: ['reset'], closeOnApply: true, debounceMs: 200 } };
+
+// The app sets the column widths from the content. The user can move columns but cannot resize them.
+function autoSize() {
+  if (!gridApi) return;
+  gridApi.autoSizeColumns(['number', 'status', 'total', 'due_amount', 'currency', 'due_date', 'reminder']);
+}
+
 function initGrid() {
   gridApi = agGrid.createGrid($('grid'), {
     columnDefs: [
-      { field: 'number', headerName: 'No.', width: 90 },
-      { field: 'client_name', headerName: 'Client', flex: 1, minWidth: 140, filter: true,
+      { field: 'number', headerName: 'No.' },
+      { field: 'client_name', headerName: 'Client', flex: 1, minWidth: 150, ...textFilter,
         tooltipValueGetter: p => p.data.client_email },
-      { field: 'status', width: 150, filter: true,
+      { field: 'status', ...textFilter,
         cellRenderer: p => '<span class="pill ' + esc(p.value) + '">' + esc(p.value) + '</span>' },
-      { field: 'total', width: 110, type: 'rightAligned', valueFormatter: money },
-      { field: 'due_amount', headerName: 'Due', width: 110, type: 'rightAligned', valueFormatter: money },
-      { field: 'currency', headerName: 'Cur.', width: 80 },
-      { field: 'due_date', headerName: 'Due date', width: 140, sort: 'desc' },
-      { headerName: 'Next reminder', colId: 'reminder', width: 170, sortable: false,
+      { field: 'total', type: 'rightAligned', valueFormatter: money },
+      { field: 'due_amount', headerName: 'Due', type: 'rightAligned', valueFormatter: money },
+      { field: 'currency', headerName: 'Cur.' },
+      { field: 'due_date', headerName: 'Due date' },
+      { headerName: 'Next reminder', colId: 'reminder', sortable: false,
         valueGetter: p => reminderText(p.data),
         tooltipValueGetter: p => p.data.last_reminder ? 'Last reminder: ' + new Date(p.data.last_reminder).toLocaleString() : 'No reminder sent yet' },
-      { headerName: 'Action', colId: 'action', width: 190, sortable: false, pinned: 'right', cellRenderer: actionCell },
+      { headerName: 'Action', colId: 'action', width: 190, sortable: false, pinned: 'right',
+        suppressMovable: true, cellRenderer: actionCell },
     ],
     rowData: [],
     theme: gridTheme(),
-    defaultColDef: { sortable: true, resizable: true },
+    defaultColDef: { sortable: true, resizable: false, suppressHeaderMenuButton: true },
+    localeText: { resetFilter: 'Clear filter' },
     getRowId: p => p.data.id,
+    // Newest invoices first, 15 per page.
+    pagination: true,
+    paginationPageSize: 15,
+    paginationPageSizeSelector: false,
+    domLayout: 'autoHeight',
+    onRowDataUpdated: autoSize,
+    onFirstDataRendered: autoSize,
     overlayNoRowsTemplate: 'No invoices yet. Ask the agent to create one.',
   });
 }
@@ -334,6 +353,7 @@ async function refresh() {
     const { invoices } = await api('/api/invoices');
     gridApi.setGridOption('rowData', invoices);
     gridApi.refreshCells({ columns: ['reminder'], force: true });
+    autoSize();
     const open = invoices.filter(i => ['SENT', 'PARTIALLY_PAID', 'PAYMENT_PENDING'].includes(i.status));
     const paid = invoices.filter(i => ['PAID', 'MARKED_AS_PAID'].includes(i.status));
     $('sOut').textContent = open.reduce((s, i) => s + i.due_amount, 0).toFixed(2);
