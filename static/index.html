@@ -61,6 +61,11 @@
   .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:12px; }
   .stat b { display:block; font-size:22px; }
   .stat span { color:var(--muted); font-size:13px; }
+  .tabs { display:flex; gap:2px; border-bottom:1px solid var(--line); margin-bottom:10px; overflow-x:auto; }
+  .tab { background:transparent; color:var(--muted); border:0; border-bottom:2px solid transparent; border-radius:8px 8px 0 0; padding:8px 14px; min-height:0; font-size:14px; white-space:nowrap; }
+  .tab:hover { color:var(--ink); background:var(--bubble); }
+  .tab.active { color:var(--accent); border-bottom-color:var(--accent); font-weight:600; }
+  .tab .n { font-size:12px; font-weight:400; background:var(--idle-bg); color:var(--muted); border-radius:999px; padding:1px 7px; margin-left:4px; }
   #grid { min-height:160px; }
   .cellbtn { padding:0 8px; min-height:0; height:26px; line-height:24px; font-size:12px; margin-right:4px; }
   .cellbtn.danger { color:var(--err); border-color:var(--err); }
@@ -126,6 +131,12 @@
     </div>
     <div class="card">
       <h2>Invoices (live from PayPal)</h2>
+      <div class="tabs" role="tablist" aria-label="Filter invoices by status">
+        <button class="tab active" role="tab" aria-selected="true" data-tab="all">All <span class="n">0</span></button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="draft">Draft <span class="n">0</span></button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="sent">Sent <span class="n">0</span></button>
+        <button class="tab" role="tab" aria-selected="false" data-tab="paid">Paid <span class="n">0</span></button>
+      </div>
       <div id="grid"></div>
     </div>
     <div class="card" style="margin-top:12px">
@@ -304,9 +315,23 @@ function actionCell(p) {
 
 const money = p => p.value == null ? '' : Number(p.value).toFixed(2);
 
-// One simple text filter with a "Clear filter" button inside the filter box.
-const textFilter = { filter: 'agTextColumnFilter',
-  filterParams: { filterOptions: ['contains'], maxNumConditions: 1, buttons: ['reset'], closeOnApply: true, debounceMs: 200 } };
+// Status tabs filter the table.
+const TABS = { all: null, draft: ['DRAFT'], sent: ['SENT', 'PARTIALLY_PAID', 'PAYMENT_PENDING'], paid: ['PAID', 'MARKED_AS_PAID'] };
+let activeTab = 'all';
+function setTab(name) {
+  activeTab = name;
+  document.querySelectorAll('.tab').forEach(t => {
+    const on = t.dataset.tab === name;
+    t.classList.toggle('active', on); t.setAttribute('aria-selected', on);
+  });
+  if (gridApi) { gridApi.onFilterChanged(); gridApi.paginationGoToFirstPage(); }
+}
+function updateTabCounts(invoices) {
+  document.querySelectorAll('.tab').forEach(t => {
+    const set = TABS[t.dataset.tab];
+    t.querySelector('.n').textContent = set ? invoices.filter(i => set.includes(i.status)).length : invoices.length;
+  });
+}
 
 // The app sets the column widths from the content. The user can move columns but cannot resize them.
 function autoSize() {
@@ -318,9 +343,9 @@ function initGrid() {
   gridApi = agGrid.createGrid($('grid'), {
     columnDefs: [
       { field: 'number', headerName: 'No.' },
-      { field: 'client_name', headerName: 'Client', flex: 1, minWidth: 120, ...textFilter,
+      { field: 'client_name', headerName: 'Client', flex: 1, minWidth: 120,
         tooltipValueGetter: p => p.data.client_email },
-      { field: 'status', ...textFilter,
+      { field: 'status',
         cellRenderer: p => '<span class="pill ' + esc(p.value) + '">' + esc(p.value) + '</span>' },
       { field: 'total', type: 'rightAligned', valueFormatter: p => (p.data.currency || '') + ' ' + money(p) },
       { field: 'due_amount', headerName: 'Due', type: 'rightAligned', valueFormatter: money },
@@ -335,7 +360,8 @@ function initGrid() {
     rowData: [],
     theme: gridTheme(),
     defaultColDef: { sortable: true, resizable: false, suppressHeaderMenuButton: true },
-    localeText: { resetFilter: 'Clear filter' },
+    isExternalFilterPresent: () => activeTab !== 'all',
+    doesExternalFilterPass: node => TABS[activeTab].includes(node.data.status),
     getRowId: p => p.data.id,
     // Newest invoices first, 15 per page.
     pagination: true,
@@ -344,7 +370,7 @@ function initGrid() {
     domLayout: 'autoHeight',
     onRowDataUpdated: autoSize,
     onFirstDataRendered: autoSize,
-    overlayNoRowsTemplate: 'No invoices yet. Ask the agent to create one.',
+    overlayNoRowsTemplate: 'No invoices here.',
   });
 }
 
@@ -352,6 +378,7 @@ async function refresh() {
   try {
     const { invoices } = await api('/api/invoices');
     gridApi.setGridOption('rowData', invoices);
+    updateTabCounts(invoices);
     gridApi.refreshCells({ columns: ['reminder'], force: true });
     autoSize();
     const open = invoices.filter(i => ['SENT', 'PARTIALLY_PAID', 'PAYMENT_PENDING'].includes(i.status));
@@ -372,6 +399,7 @@ async function refresh() {
 $('sendBtn').onclick = () => { const v = $('input').value.trim(); if (v) { $('input').value = ''; ask(v); } };
 $('chaseBtn').onclick = chase;
 $('input').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('sendBtn').click(); });
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => setTab(t.dataset.tab));
 document.querySelectorAll('.chip').forEach(c => c.onclick = () => { $('input').value = c.dataset.text; $('input').focus(); });
 
 applyTheme(savedTheme() || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
