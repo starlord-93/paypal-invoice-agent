@@ -30,7 +30,6 @@ CHASE_PROMPT = ("Check all my invoices. Send a polite reminder for each unpaid s
 async def run_chase(source: str) -> dict:
     """Send reminders for eligible invoices. The AI model is called only if there is work to do."""
     invoices = await paypal.list_invoices()
-    numbers = {i["id"]: i["number"] for i in invoices}
     ready = policy.eligible(invoices)
     open_count = sum(1 for i in invoices if i.get("reminder_state"))
     if not ready:
@@ -41,13 +40,7 @@ async def run_chase(source: str) -> dict:
             reply = "No reminders sent. There are no unpaid sent invoices."
         return {"reply": reply, "steps": [], "history": []}
     out = await run_agent(paypal, CHASE_PROMPT)
-    for s in out["steps"]:
-        if s["tool"] == "send_reminder":
-            num = numbers.get(s["args"].get("invoice_id"), s["args"].get("invoice_id"))
-            if (s["result"] or {}).get("reminder_sent"):
-                log(source, f"Reminder sent for invoice {num}")
-            else:
-                log(source, f"Reminder skipped for invoice {num} (anti-spam policy)")
+    log_steps(source, out["steps"], invoices)
     return out
 
 
@@ -78,6 +71,43 @@ def pp_http(e: PayPalError) -> HTTPException:
     return HTTPException(502, e.as_dict())
 
 
+def log_steps(source: str, steps: list, known: list | None = None):
+    """Write agent actions to the activity list in plain words: client name and invoice number, no IDs."""
+    by_id = {i["id"]: i for i in (known or [])}
+    for s in steps:  # learn names from what the tools returned
+        r = s.get("result") or {}
+        for inv in r.get("invoices", []) if isinstance(r.get("invoices"), list) else []:
+            by_id[inv["id"]] = inv
+        if r.get("id") and r.get("number"):
+            by_id[r["id"]] = r
+
+    def who(invoice_id):
+        inv = by_id.get(invoice_id)
+        if not inv:
+            return "an invoice"
+        return f"invoice {inv['number']} ({inv.get('client_name') or 'client'})"
+
+    for s in steps:
+        tool, r, args = s["tool"], s.get("result") or {}, s.get("args") or {}
+        if tool in ("list_invoices", "get_invoice"):
+            continue
+        if r.get("error"):
+            what = {"create_invoice": "create an invoice", "send_invoice": f"send {who(args.get('invoice_id'))}",
+                    "send_reminder": f"send a reminder for {who(args.get('invoice_id'))}"}.get(tool, tool)
+            log(source, f"Could not {what}. Error code: {r.get('code') or 'unknown'}")
+        elif tool == "create_invoice":
+            log(source, f"Draft invoice {r.get('number')} created for {r.get('client_name')}, "
+                        f"{r.get('currency')} {r.get('total', 0):.2f}")
+        elif tool == "send_invoice":
+            log(source, f"Invoice {r.get('number')} sent to {r.get('client_name')}, "
+                        f"{r.get('currency')} {r.get('total', 0):.2f}")
+        elif tool == "send_reminder":
+            if r.get("reminder_sent"):
+                log(source, f"Reminder sent for {who(args.get('invoice_id'))}")
+            else:
+                log(source, f"Reminder skipped for {who(args.get('invoice_id'))}: anti-spam policy")
+
+
 def log(kind: str, text: str):
     events.appendleft({"time": datetime.now(timezone.utc).isoformat(), "kind": kind, "text": text})
 
@@ -96,9 +126,7 @@ async def agent(req: AgentRequest):
     except Exception as e:  # show the cause in the UI instead of a bare 500
         raise HTTPException(500, {"error": "Something went wrong in the app.", "code": "APP_ERROR",
                                   "raw": f"{type(e).__name__}: {e}"})
-    for s in out["steps"]:
-        ok = "error" not in (s["result"] or {})
-        log("agent", f"{s['tool']} {'succeeded' if ok else 'failed'}")
+    log_steps("agent", out["steps"])
     return out
 
 
@@ -117,7 +145,7 @@ async def send(invoice_id: str):
     except PayPalError as e:
         raise pp_http(e)
     policy.record_sent(invoice_id)
-    log("user", f"Invoice {inv['number']} sent")
+    log("you", f"Invoice {inv['number']} sent to {inv['client_name']}")
     return inv
 
 
@@ -127,7 +155,7 @@ async def delete(invoice_id: str):
         out = await paypal.delete_invoice(invoice_id)
     except PayPalError as e:
         raise pp_http(e)
-    log("user", "Draft invoice deleted")
+    log("you", "Draft invoice deleted")
     return out
 
 
@@ -147,7 +175,7 @@ class AutoChase(BaseModel):
 @app.post("/api/autochase")
 async def set_autochase(body: AutoChase):
     auto["enabled"] = body.enabled
-    log("user", f"Auto-chase turned {'on' if body.enabled else 'off'}")
+    log("you", f"Auto-chase turned {'on' if body.enabled else 'off'}")
     return auto
 
 
@@ -162,8 +190,13 @@ async def webhook(request: Request):
     kind = event.get("event_type", "")
     res = event.get("resource", {})
     inv = res.get("invoice", res)
-    number = (inv.get("detail") or {}).get("invoice_number") or inv.get("id", "")
-    log("paypal", f"{kind} for invoice {number}")
+    number = (inv.get("detail") or {}).get("invoice_number") or "unknown"
+    name = ((inv.get("primary_recipients") or [{}])[0].get("billing_info") or {}).get("name") or {}
+    client = (name.get("full_name") or f"{name.get('given_name', '')} {name.get('surname', '')}").strip()
+    labels = {"INVOICING.INVOICE.PAID": "Payment received", "INVOICING.INVOICE.CANCELLED": "Invoice cancelled",
+              "INVOICING.INVOICE.REFUNDED": "Payment refunded", "INVOICING.INVOICE.CREATED": "Invoice created",
+              "INVOICING.INVOICE.SCHEDULED": "Invoice scheduled", "INVOICING.INVOICE.UPDATED": "Invoice updated"}
+    log("paypal", f"{labels.get(kind, kind)}: invoice {number}" + (f" ({client})" if client else ""))
     return {"received": True}
 
 
@@ -190,7 +223,7 @@ async def mock_pay(invoice_id: str):
         inv = paypal.mark_paid(invoice_id)
     except PayPalError as e:
         raise HTTPException(404, str(e))
-    log("paypal", f"INVOICING.INVOICE.PAID for invoice {inv['number']}")
+    log("paypal", f"Payment received: invoice {inv['number']} ({inv['client_name']})")
     return f"<h2>Mock payment complete for invoice {inv['number']}</h2><p>You can close this tab.</p>"
 
 
