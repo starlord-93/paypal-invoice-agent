@@ -15,7 +15,9 @@ Built for the PayPal AI Hackathon.
 5. **Does not spam clients.** The server allows one reminder per invoice per cooldown period and a maximum number of reminders per invoice. The AI agent cannot go around this rule. The table shows when the next reminder is allowed.
 6. **Auto-chase.** One switch lets the agent work alone: it checks every minute and sends a reminder when an invoice is unpaid and its cooldown has ended.
 7. **Receives PayPal webhooks.** Payment events show in the activity feed.
-8. **Works on phone, tablet and desktop**, with a light and a dark mode.
+8. **Clear errors.** The user sees a plain message and an error code. The raw PayPal response is behind "Technical details". A "Contact support" link opens a support request with the error code filled in.
+9. **Share the pay link.** Copy or share the PayPal pay link by SMS, WhatsApp or another app.
+10. **Works on phone, tablet and desktop**, with a light and a dark mode.
 
 ## How PayPal and AI are used
 

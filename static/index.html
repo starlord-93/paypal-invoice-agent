@@ -7,49 +7,63 @@
 <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@33/dist/ag-grid-community.min.js"></script>
 <style>
   :root { --ink:#14213d; --muted:#5c677d; --line:#e3e7ee; --bg:#f6f7fb; --card:#fff; --accent:#0b57d0; --on-accent:#fff;
-          --bubble:#eef2f9; --ok:#137333; --ok-bg:#e6f4ea; --warn:#b06000; --warn-bg:#fef3e0; --idle-bg:#eef0f4; color-scheme: light; }
+          --bubble:#eef2f9; --ok:#137333; --ok-bg:#e6f4ea; --warn:#b06000; --warn-bg:#fef3e0; --idle-bg:#eef0f4;
+          --err:#b3261e; --err-bg:#fdecea; color-scheme: light; }
   :root[data-theme="dark"] { --ink:#e6e9ef; --muted:#9aa4b5; --line:#2a303b; --bg:#0f1218; --card:#171b23; --accent:#7aa7ff; --on-accent:#0b1220;
-          --bubble:#222834; --ok:#7ddc9a; --ok-bg:#16301f; --warn:#f5c26b; --warn-bg:#3a2a10; --idle-bg:#262c38; color-scheme: dark; }
+          --bubble:#222834; --ok:#7ddc9a; --ok-bg:#16301f; --warn:#f5c26b; --warn-bg:#3a2a10; --idle-bg:#262c38;
+          --err:#ffb4ab; --err-bg:#3b1614; color-scheme: dark; }
   * { box-sizing: border-box; }
   body { margin:0; font:15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--ink); background:var(--bg); }
-  header { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; padding:14px 24px; background:var(--card); border-bottom:1px solid var(--line); }
+  a { color:var(--accent); }
+  header { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; padding:12px 24px; background:var(--card); border-bottom:1px solid var(--line); }
   header h1 { font-size:18px; margin:0; }
   header .tag { color:var(--muted); font-size:13px; }
-  header .right { margin-left:auto; display:flex; align-items:center; gap:8px; }
+  header .right { margin-left:auto; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
   header .mode { font-size:12px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:3px 10px; }
-  main { display:grid; grid-template-columns: 380px 1fr; gap:16px; padding:16px 24px; max-width:1400px; margin:0 auto; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
-  h2 { font-size:14px; margin:0 0 10px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
-  #chat { height:340px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; margin-bottom:10px; }
-  .msg { padding:8px 12px; border-radius:10px; max-width:92%; white-space:pre-wrap; }
+  header .support { font-size:13px; text-decoration:none; border:1px solid var(--line); border-radius:8px; padding:5px 10px; color:var(--ink); }
+  /* toggle switch */
+  .switch { display:inline-flex; align-items:center; gap:8px; font-size:13px; cursor:pointer; user-select:none; }
+  .switch input { position:absolute; opacity:0; width:0; height:0; }
+  .switch .track { width:38px; height:22px; border-radius:999px; background:var(--line); position:relative; transition:background .15s; flex:none; }
+  .switch .track::after { content:""; position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:var(--card); box-shadow:0 1px 2px rgba(0,0,0,.3); transition:transform .15s; }
+  .switch input:checked + .track { background:var(--accent); }
+  .switch input:checked + .track::after { transform:translateX(16px); }
+  .switch input:focus-visible + .track { outline:2px solid var(--accent); outline-offset:2px; }
+
+  main { display:grid; grid-template-columns: 400px 1fr; gap:16px; padding:16px 24px; max-width:1500px; margin:0 auto; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; min-width:0; }
+  h2 { font-size:13px; margin:0 0 10px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  #chat { height:340px; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; gap:8px; margin-bottom:10px; }
+  .msg { padding:8px 12px; border-radius:10px; max-width:92%; white-space:pre-wrap; overflow-wrap:anywhere; }
   .msg.user { align-self:flex-end; background:var(--accent); color:var(--on-accent); }
   .msg.bot { align-self:flex-start; background:var(--bubble); }
-  .msg.tool { align-self:flex-start; font:12px ui-monospace, monospace; color:var(--muted); background:none; padding:0 4px; }
-  textarea { width:100%; min-height:70px; padding:10px; border:1px solid var(--line); border-radius:8px; font:inherit; resize:vertical; background:var(--card); color:var(--ink); }
+  .msg.tool { align-self:flex-start; font-size:12px; color:var(--muted); background:none; padding:0 4px; }
+  .msg.err { align-self:stretch; max-width:100%; background:var(--err-bg); border:1px solid var(--err); white-space:normal; }
+  .msg.err .title { font-weight:600; color:var(--err); }
+  .msg.err .code { font-size:12px; color:var(--muted); margin-top:4px; }
+  .msg.err .actions { display:flex; gap:12px; flex-wrap:wrap; margin-top:8px; font-size:13px; }
+  .msg.err details { margin-top:8px; font-size:12px; }
+  .msg.err summary { cursor:pointer; color:var(--muted); }
+  .msg.err pre { margin:6px 0 0; padding:8px; background:var(--card); border:1px solid var(--line); border-radius:6px;
+                 white-space:pre-wrap; overflow-wrap:anywhere; max-height:160px; overflow:auto; font:11px/1.4 ui-monospace, monospace; }
+  .empty { margin:auto; text-align:center; color:var(--muted); font-size:13px; padding:0 16px; }
+  textarea { width:100%; min-height:76px; padding:10px; border:1px solid var(--line); border-radius:8px; font:inherit; resize:vertical; background:var(--card); color:var(--ink); }
   button { font:inherit; border:0; border-radius:8px; padding:9px 14px; min-height:40px; cursor:pointer; background:var(--accent); color:var(--on-accent); }
   button.secondary { background:transparent; color:var(--accent); border:1px solid var(--accent); }
   button:disabled { opacity:.5; cursor:wait; }
   .row { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
-  .auto { display:flex; gap:8px; align-items:flex-start; margin-top:10px; font-size:13px; cursor:pointer; }
-  .auto input { width:18px; height:18px; margin:1px 0 0; accent-color:var(--accent); }
-  .policy { font-size:12px; color:var(--muted); margin-top:4px; }
-  .examples { margin-top:10px; font-size:13px; color:var(--muted); }
-  .examples a { display:block; color:var(--accent); cursor:pointer; margin-top:4px; }
+  .hint { font-size:12px; color:var(--muted); margin-top:6px; }
+  .section { margin-top:14px; padding-top:12px; border-top:1px solid var(--line); }
+  .section h3 { font-size:12px; margin:0 0 8px; color:var(--muted); font-weight:600; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; }
+  .chip { background:var(--bubble); color:var(--ink); border:1px solid var(--line); border-radius:999px; padding:6px 12px; min-height:0; font-size:13px; }
+  .chip:hover { border-color:var(--accent); }
   .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:12px; }
   .stat b { display:block; font-size:22px; }
   .stat span { color:var(--muted); font-size:13px; }
   #grid { height:360px; }
-  #grid a { color:var(--accent); }
-  #themeBtn { background:transparent; color:var(--ink); border:1px solid var(--line); padding:4px 12px; min-height:32px; font-size:13px; }
-  @media (max-width: 900px) { main { padding:12px; gap:12px; } header { padding:12px; } #chat { height:260px; } }
-  @media (max-width: 600px) {
-    header .tag { flex-basis:100%; order:3; }
-    .stats { gap:8px; } .stat { padding:10px; } .stat b { font-size:17px; } .stat span { font-size:12px; }
-    .row button { flex:1; }
-    #grid { height:320px; }
-    textarea { font-size:16px; } /* stops zoom on focus in iOS */
-  }
+  .cellbtn { padding:0 10px; min-height:0; height:28px; line-height:26px; font-size:13px; margin-right:6px; }
+  .cellbtn.danger { color:var(--err); border-color:var(--err); }
   .pill { padding:2px 9px; border-radius:999px; font-size:12px; font-weight:600; }
   .pill.PAID, .pill.MARKED_AS_PAID { background:var(--ok-bg); color:var(--ok); }
   .pill.SENT, .pill.PARTIALLY_PAID, .pill.PAYMENT_PENDING { background:var(--warn-bg); color:var(--warn); }
@@ -57,29 +71,52 @@
   #events { list-style:none; margin:0; padding:0; max-height:150px; overflow-y:auto; font-size:13px; }
   #events li { padding:5px 0; border-bottom:1px solid var(--line); }
   #events time { color:var(--muted); margin-right:8px; }
+  @media (max-width: 1000px) { main { grid-template-columns:1fr; padding:12px; gap:12px; } header { padding:12px; } #chat { height:260px; } }
+  @media (max-width: 600px) {
+    header .tag { flex-basis:100%; order:3; }
+    header .mode { display:none; }
+    .stats { gap:8px; } .stat { padding:10px; } .stat b { font-size:17px; } .stat span { font-size:12px; }
+    .row button { flex:1; }
+    #grid { height:320px; }
+    textarea { font-size:16px; } /* stops zoom on focus in iOS */
+  }
 </style>
 </head>
 <body>
 <header>
   <h1>PayMeBot</h1>
   <span class="tag">Tell it what you did. It bills the client through PayPal and follows up on payment.</span>
-  <span class="right"><span class="mode" id="mode"></span><button id="themeBtn" type="button" aria-label="Switch between light and dark mode">Dark</button></span>
+  <span class="right">
+    <span class="mode" id="mode"></span>
+    <a class="support" id="supportLink" href="#" target="_blank" rel="noopener">Support</a>
+    <label class="switch" title="Switch between light and dark mode"><input type="checkbox" id="themeChk"><span class="track"></span><span>Dark mode</span></label>
+  </span>
 </header>
 <main>
   <section class="card">
     <h2>Agent</h2>
-    <div id="chat"></div>
+    <div id="chat"><div class="empty" id="empty">Describe the work you did, who it was for, and the price. The agent does the rest.</div></div>
     <textarea id="input" placeholder="Example: Logo design for Ravi Kumar (ravi@example.com), 3 hours at $40. Send it, due Friday."></textarea>
+    <div class="hint">PayPal sends the invoice to the client's email address. After that, you can also copy the pay link and share it by SMS or WhatsApp.</div>
     <div class="row">
       <button id="sendBtn">Ask agent</button>
       <button id="chaseBtn" class="secondary" title="The agent finds unpaid invoices and sends reminders">Chase unpaid invoices</button>
     </div>
-    <label class="auto"><input type="checkbox" id="autoChk"> <span>Auto-chase: the agent checks every minute and reminds when the cooldown ends</span></label>
-    <div class="policy" id="policy"></div>
-    <div class="examples">Try:
-      <a>Website bug fixes for Maya Lee (maya@example.com): 5 hours at $60 and 1 hosting setup at $120. Send it, due in 7 days.</a>
-      <a>Draft an invoice for John Park (john@example.com), 2 consulting sessions at $150 each.</a>
-      <a>Which clients have not paid me?</a>
+
+    <div class="section">
+      <h3>Quick start</h3>
+      <div class="chips">
+        <button class="chip" data-text="Website bug fixes for Maya Lee (maya@example.com): 5 hours at $60 and 1 hosting setup at $120. Send it, due in 7 days.">Bill a client</button>
+        <button class="chip" data-text="Draft an invoice for John Park (john@example.com), 2 consulting sessions at $150 each.">Draft only</button>
+        <button class="chip" data-text="Which clients have not paid me, and how much is outstanding?">Who owes me?</button>
+        <button class="chip" data-text="Send the draft invoice for ">Send a draft</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Reminders</h3>
+      <label class="switch"><input type="checkbox" id="autoChk"><span class="track"></span><span>Auto-chase unpaid invoices</span></label>
+      <div class="hint" id="policy"></div>
     </div>
   </section>
   <section>
@@ -102,7 +139,9 @@
 const $ = id => document.getElementById(id);
 let history = [];
 let gridApi;
-
+let supportUrl = '';
+const TOOL_NAMES = { create_invoice: 'Create invoice', send_invoice: 'Send invoice', list_invoices: 'Read invoices',
+                     get_invoice: 'Read invoice', send_reminder: 'Send reminder' };
 
 // Theme: saved choice first, then the system setting.
 function savedTheme() { try { return localStorage.getItem('theme'); } catch (e) { return null; } }
@@ -113,7 +152,7 @@ function gridTheme() {
 }
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
-  $('themeBtn').textContent = t === 'dark' ? 'Light' : 'Dark';
+  $('themeChk').checked = t === 'dark';
   if (gridApi) gridApi.setGridOption('theme', gridTheme());
 }
 // Small screens: show only the columns that matter.
@@ -126,66 +165,101 @@ function fitColumns() {
 }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
 function addMsg(kind, text) {
-  const d = document.createElement('div');
-  d.className = 'msg ' + kind;
-  d.textContent = text;
+  const empty = $('empty'); if (empty) empty.remove();
+  const d = el('div', 'msg ' + kind, text);
   $('chat').appendChild(d);
   $('chat').scrollTop = $('chat').scrollHeight;
   return d;
 }
 
+// Support link with the error code filled in. No client data is included.
+function supportHref(info) {
+  if (!supportUrl) return '#';
+  const title = info ? 'Problem: ' + (info.code || 'error') : 'Support request';
+  const body = info
+    ? 'What I tried to do:\n\n\nError code: ' + (info.code || 'none') + '\nPayPal debug ID: ' + (info.debug_id || 'none') + '\nTime: ' + new Date().toISOString()
+    : 'Describe your question or problem:\n';
+  const sep = supportUrl.includes('?') ? '&' : '?';
+  const key = supportUrl.startsWith('mailto:') ? 'subject' : 'title';
+  return supportUrl + sep + key + '=' + encodeURIComponent(title) + '&body=' + encodeURIComponent(body);
+}
+
+// Error card: plain message and code for the user, raw log behind a "Technical details" control.
+function addError(title, info) {
+  if (typeof info === 'string') info = { error: info };
+  info = info || {};
+  const box = addMsg('err', null);
+  box.appendChild(el('div', 'title', title));
+  box.appendChild(el('div', null, info.error || 'Something went wrong.'));
+  if (info.code) box.appendChild(el('div', 'code', 'Error code: ' + info.code));
+  const actions = el('div', 'actions');
+  const a = el('a', null, 'Contact support');
+  a.href = supportHref(info); a.target = '_blank'; a.rel = 'noopener';
+  actions.appendChild(a);
+  box.appendChild(actions);
+  if (info.raw) {
+    const det = el('details');
+    det.appendChild(el('summary', null, 'Technical details'));
+    det.appendChild(el('pre', null, info.raw + (info.debug_id ? '\nPayPal debug ID: ' + info.debug_id : '')));
+    box.appendChild(det);
+  }
+  $('chat').scrollTop = $('chat').scrollHeight;
+}
+
 async function api(path, opts) {
   const r = await fetch(path, opts);
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    const err = new Error('Request failed');
+    err.info = typeof body.detail === 'object' && body.detail ? body.detail
+      : { error: body.detail || 'The app did not answer.', code: 'HTTP_' + r.status };
+    throw err;
+  }
   return r.json();
 }
+function failInfo(e) { return e.info || { error: 'The app is not reachable. Check that the server is running.', code: 'NETWORK_ERROR', raw: String(e) }; }
 
 function setBusy(b) { $('sendBtn').disabled = b; $('chaseBtn').disabled = b; }
 
 function showSteps(steps) {
   for (const s of steps) {
-    const failed = s.result && s.result.error;
-    addMsg('tool', (failed ? '✗ ' : '✓ ') + 'PayPal tool: ' + s.tool + (failed ? ' (' + s.result.error + ')' : ''));
+    const name = TOOL_NAMES[s.tool] || s.tool;
+    const r = s.result || {};
+    if (r.error) addError('Could not complete: ' + name, r);
+    else if (r.skipped) addMsg('tool', '• ' + name + ' skipped (anti-spam policy)');
+    else addMsg('tool', '✓ ' + name);
   }
 }
 
-async function ask(message) {
-  addMsg('user', message);
+async function runAgent(label, call) {
+  addMsg('user', label);
   const wait = addMsg('bot', 'Working...');
   setBusy(true);
   try {
-    const out = await api('/api/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, history }) });
+    const out = await call();
     wait.remove();
-    showSteps(out.steps);
-    addMsg('bot', out.reply);
-    history = out.history || [];
-  } catch (e) { wait.textContent = 'Error: ' + e.message; }
-  setBusy(false);
-  refresh();
+    showSteps(out.steps || []);
+    if (out.error) addError('The assistant could not answer', out.error);
+    if (out.reply) addMsg('bot', out.reply);
+    return out;
+  } catch (e) { wait.remove(); addError('Request failed', failInfo(e)); }
+  finally { setBusy(false); refresh(); }
 }
 
-async function chase() {
-  addMsg('user', 'Chase unpaid invoices');
-  const wait = addMsg('bot', 'Checking invoices...');
-  setBusy(true);
-  try {
-    const out = await api('/api/chase', { method: 'POST' });
-    wait.remove();
-    showSteps(out.steps);
-    addMsg('bot', out.reply);
-  } catch (e) { wait.textContent = 'Error: ' + e.message; }
-  setBusy(false);
-  refresh();
+async function ask(message) {
+  const out = await runAgent(message, () => api('/api/agent', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, history }) }));
+  if (out && out.history) history = out.history;
 }
+const chase = () => runAgent('Chase unpaid invoices', () => api('/api/chase', { method: 'POST' }));
 
-async function sendInvoice(id) {
-  try { await api('/api/invoices/' + id + '/send', { method: 'POST' }); } catch (e) { alertMsg(e.message); }
+async function invoiceAction(method, path, title) {
+  try { await api(path, { method }); } catch (e) { addError(title, failInfo(e)); }
   refresh();
 }
-function alertMsg(t) { addMsg('bot', 'Error: ' + t); }
 
 function reminderText(d) {
   if (!d.reminder_state) return '';
@@ -196,13 +270,46 @@ function reminderText(d) {
   return 'In ' + (mins >= 60 ? Math.floor(mins / 60) + ' h ' + (mins % 60) + ' min' : mins + ' min') + ' (' + used + ' sent)';
 }
 
+function cellBtn(text, cls, onclick, title) {
+  const b = el('button', 'cellbtn secondary ' + (cls || ''), text);
+  b.onclick = onclick; if (title) b.title = title;
+  return b;
+}
+
+function actionCell(p) {
+  const d = p.data, wrap = el('span');
+  if (d.status === 'DRAFT') {
+    wrap.appendChild(cellBtn('Send', '', () => invoiceAction('POST', '/api/invoices/' + d.id + '/send', 'Could not send the invoice')));
+    const del = cellBtn('Delete', 'danger', () => {
+      if (del.dataset.armed) return invoiceAction('DELETE', '/api/invoices/' + d.id, 'Could not delete the draft');
+      del.dataset.armed = '1'; del.textContent = 'Confirm?';
+      setTimeout(() => { delete del.dataset.armed; del.textContent = 'Delete'; }, 4000);
+    }, 'Delete this draft from PayPal');
+    wrap.appendChild(del);
+  } else if (d.pay_url && d.due_amount > 0) {
+    const a = el('a', null, 'Pay link');
+    a.href = d.pay_url; a.target = '_blank'; a.rel = 'noopener'; a.style.marginRight = '10px';
+    wrap.appendChild(a);
+    const share = cellBtn(navigator.share ? 'Share' : 'Copy', '', async () => {
+      const text = 'Invoice ' + d.number + ' for ' + d.currency + ' ' + Number(d.due_amount).toFixed(2) + '. Pay here: ' + d.pay_url;
+      try {
+        if (navigator.share) await navigator.share({ text });
+        else { await navigator.clipboard.writeText(text); share.textContent = 'Copied'; setTimeout(() => share.textContent = 'Copy', 2000); }
+      } catch (e) {}
+    }, 'Share the pay link by SMS, WhatsApp or another app');
+    wrap.appendChild(share);
+  }
+  return wrap;
+}
+
 const money = p => p.value == null ? '' : Number(p.value).toFixed(2);
 
 function initGrid() {
   gridApi = agGrid.createGrid($('grid'), {
     columnDefs: [
       { field: 'number', headerName: 'No.', width: 90 },
-      { field: 'client_name', headerName: 'Client', flex: 1, minWidth: 140, filter: true },
+      { field: 'client_name', headerName: 'Client', flex: 1, minWidth: 140, filter: true,
+        tooltipValueGetter: p => p.data.client_email },
       { field: 'status', width: 150, filter: true,
         cellRenderer: p => '<span class="pill ' + esc(p.value) + '">' + esc(p.value) + '</span>' },
       { field: 'total', width: 110, type: 'rightAligned', valueFormatter: money },
@@ -212,22 +319,7 @@ function initGrid() {
       { headerName: 'Next reminder', colId: 'reminder', width: 170, sortable: false,
         valueGetter: p => reminderText(p.data),
         tooltipValueGetter: p => p.data.last_reminder ? 'Last reminder: ' + new Date(p.data.last_reminder).toLocaleString() : 'No reminder sent yet' },
-      { headerName: 'Action', width: 110, sortable: false, pinned: 'right', colId: 'action',
-        cellRenderer: p => {
-          const d = p.data;
-          if (d.status === 'DRAFT') {
-            const b = document.createElement('button');
-            b.textContent = 'Send'; b.className = 'secondary'; b.style.cssText = 'padding:0 12px; min-height:0; height:28px; line-height:26px;';
-            b.onclick = () => sendInvoice(d.id);
-            return b;
-          }
-          if (d.pay_url && d.due_amount > 0) {
-            const a = document.createElement('a');
-            a.href = d.pay_url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'Pay link';
-            return a;
-          }
-          return '';
-        } },
+      { headerName: 'Action', colId: 'action', width: 190, sortable: false, pinned: 'right', cellRenderer: actionCell },
     ],
     rowData: [],
     theme: gridTheme(),
@@ -241,12 +333,13 @@ async function refresh() {
   try {
     const { invoices } = await api('/api/invoices');
     gridApi.setGridOption('rowData', invoices);
+    gridApi.refreshCells({ columns: ['reminder'], force: true });
     const open = invoices.filter(i => ['SENT', 'PARTIALLY_PAID', 'PAYMENT_PENDING'].includes(i.status));
     const paid = invoices.filter(i => ['PAID', 'MARKED_AS_PAID'].includes(i.status));
     $('sOut').textContent = open.reduce((s, i) => s + i.due_amount, 0).toFixed(2);
     $('sPaid').textContent = paid.reduce((s, i) => s + i.total, 0).toFixed(2);
     $('sCount').textContent = invoices.length;
-  } catch (e) { /* shown on next agent call */ }
+  } catch (e) { /* shown on the next user action */ }
   try {
     const { events } = await api('/api/events');
     if (events.length) {
@@ -259,25 +352,28 @@ async function refresh() {
 $('sendBtn').onclick = () => { const v = $('input').value.trim(); if (v) { $('input').value = ''; ask(v); } };
 $('chaseBtn').onclick = chase;
 $('input').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $('sendBtn').click(); });
-document.querySelectorAll('.examples a').forEach(a => a.onclick = () => { $('input').value = a.textContent; $('input').focus(); });
+document.querySelectorAll('.chip').forEach(c => c.onclick = () => { $('input').value = c.dataset.text; $('input').focus(); });
 
 applyTheme(savedTheme() || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
-$('themeBtn').onclick = () => {
-  const t = currentTheme() === 'dark' ? 'light' : 'dark';
-  try { localStorage.setItem('theme', t); } catch (e) {}
+$('themeChk').onchange = e => {
+  const t = e.target.checked ? 'dark' : 'light';
+  try { localStorage.setItem('theme', t); } catch (err) {}
   applyTheme(t);
 };
 initGrid();
 fitColumns();
 window.addEventListener('resize', fitColumns);
+
 api('/api/config').then(c => {
   $('mode').textContent = 'PayPal: ' + c.paypal_mode + ' · AI: ' + c.agent_mode;
   $('autoChk').checked = c.auto_chase;
-  $('policy').textContent = 'Anti-spam policy: 1 reminder per invoice every ' + c.cooldown_minutes + ' min, maximum ' + c.reminder_max + ' per invoice.';
-});
+  $('policy').textContent = 'Anti-spam policy: 1 reminder per invoice every ' + c.cooldown_minutes + ' min, maximum ' + c.reminder_max + ' per invoice. Auto-chase checks every minute.';
+  supportUrl = c.support_url || '';
+  $('supportLink').href = supportHref(null);
+}).catch(() => {});
 $('autoChk').onchange = async e => {
   try { await api('/api/autochase', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: e.target.checked }) }); }
-  catch (err) { e.target.checked = !e.target.checked; alertMsg(err.message); }
+  catch (err) { e.target.checked = !e.target.checked; addError('Could not change auto-chase', failInfo(err)); }
   refresh();
 };
 refresh();
