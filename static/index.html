@@ -193,13 +193,13 @@ function initGrid() {
       { field: 'total', width: 110, type: 'rightAligned', valueFormatter: money },
       { field: 'due_amount', headerName: 'Due', width: 110, type: 'rightAligned', valueFormatter: money },
       { field: 'currency', headerName: 'Cur.', width: 80 },
-      { field: 'due_date', headerName: 'Due date', width: 120, sort: 'desc' },
+      { field: 'due_date', headerName: 'Due date', width: 140, sort: 'desc' },
       { headerName: 'Action', width: 110, sortable: false, pinned: 'right', colId: 'action',
         cellRenderer: p => {
           const d = p.data;
           if (d.status === 'DRAFT') {
             const b = document.createElement('button');
-            b.textContent = 'Send'; b.className = 'secondary'; b.style.padding = '2px 10px';
+            b.textContent = 'Send'; b.className = 'secondary'; b.style.cssText = 'padding:0 12px; min-height:0; height:28px; line-height:26px;';
             b.onclick = () => sendInvoice(d.id);
             return b;
           }
