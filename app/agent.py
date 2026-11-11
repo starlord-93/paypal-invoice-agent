@@ -109,6 +109,8 @@ async def run_tool(paypal, name: str, args: dict) -> dict:
         return {"error": f"Unknown tool {name}"}
     except (PayPalError, KeyError, ValueError, TypeError) as e:
         return {"error": str(e)}
+    except httpx.HTTPError as e:
+        return {"error": f"Network error on PayPal call ({type(e).__name__}: {e})"}
 
 
 async def run_agent(paypal, message: str, history: list | None = None) -> dict:
@@ -125,16 +127,20 @@ async def run_agent(paypal, message: str, history: list | None = None) -> dict:
 
     async with httpx.AsyncClient(timeout=60) as http:
         for _ in range(MAX_STEPS):
-            r = await http.post(
-                GEMINI_URL.format(model=model),
-                headers={"x-goog-api-key": key},
-                json={
-                    "system_instruction": {"parts": [{"text": SYSTEM.format(today=date.today().isoformat())}]},
-                    "contents": contents,
-                    "tools": TOOLS,
-                    "generationConfig": {"temperature": 0.2},
-                },
-            )
+            try:
+                r = await http.post(
+                    GEMINI_URL.format(model=model),
+                    headers={"x-goog-api-key": key},
+                    json={
+                        "system_instruction": {"parts": [{"text": SYSTEM.format(today=date.today().isoformat())}]},
+                        "contents": contents,
+                        "tools": TOOLS,
+                        "generationConfig": {"temperature": 0.2},
+                    },
+                )
+            except httpx.HTTPError as e:
+                return {"reply": f"Could not reach the AI model ({type(e).__name__}: {e}). Model: {model}.",
+                        "steps": steps, "history": history or []}
             if r.status_code != 200:
                 return {"reply": f"The AI model returned an error ({r.status_code}): {r.text[:300]}",
                         "steps": steps, "history": history or []}

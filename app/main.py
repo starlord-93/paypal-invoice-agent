@@ -34,7 +34,10 @@ class AgentRequest(BaseModel):
 async def agent(req: AgentRequest):
     if not req.message.strip():
         raise HTTPException(400, "Message is empty")
-    out = await run_agent(paypal, req.message.strip(), req.history)
+    try:
+        out = await run_agent(paypal, req.message.strip(), req.history)
+    except Exception as e:  # show the cause in the UI instead of a bare 500
+        raise HTTPException(500, f"{type(e).__name__}: {e}")
     for s in out["steps"]:
         ok = "error" not in (s["result"] or {})
         log("agent", f"{s['tool']} {'succeeded' if ok else 'failed'}")
