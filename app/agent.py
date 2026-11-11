@@ -113,6 +113,48 @@ async def run_tool(paypal, name: str, args: dict) -> dict:
         return {"error": f"Network error on PayPal call ({type(e).__name__}: {e})"}
 
 
+GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "25"))
+_working_model = None  # the first model that answered; used first on later calls
+
+
+def model_chain() -> list:
+    names = [m.strip() for m in os.getenv(
+        "GEMINI_MODEL", "gemini-flash-latest,gemini-3.8-flash,gemini-3.5-flash-lite,gemini-2.5-flash"
+    ).split(",") if m.strip()]
+    if _working_model in names:
+        names.remove(_working_model)
+        names.insert(0, _working_model)
+    return names
+
+
+async def _call_gemini(http, key: str, contents: list):
+    """Try each model in the chain. Returns (response, problems)."""
+    global _working_model
+    problems = []
+    for model in model_chain():
+        try:
+            r = await http.post(
+                GEMINI_URL.format(model=model),
+                headers={"x-goog-api-key": key},
+                json={
+                    "system_instruction": {"parts": [{"text": SYSTEM.format(today=date.today().isoformat())}]},
+                    "contents": contents,
+                    "tools": TOOLS,
+                    "generationConfig": {"temperature": 0.2},
+                },
+            )
+        except httpx.HTTPError as e:
+            problems.append(f"{model}: {type(e).__name__}")
+            continue
+        if r.status_code == 200:
+            _working_model = model
+            return r, problems
+        problems.append(f"{model}: HTTP {r.status_code} {r.text[:160]}")
+        if r.status_code in (400, 401, 403):  # bad request or bad key: another model will not help
+            break
+    return None, problems
+
+
 async def run_agent(paypal, message: str, history: list | None = None) -> dict:
     """Run one user turn. Returns the reply, the tool trace and the updated history."""
     if os.getenv("AGENT_MOCK") == "1":
@@ -121,28 +163,14 @@ async def run_agent(paypal, message: str, history: list | None = None) -> dict:
     key = os.getenv("GEMINI_API_KEY")
     if not key:
         return {"reply": "GEMINI_API_KEY is not set on the server.", "steps": [], "history": history or []}
-    model = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
     contents = list(history or []) + [{"role": "user", "parts": [{"text": message}]}]
     steps = []
 
-    async with httpx.AsyncClient(timeout=60) as http:
+    async with httpx.AsyncClient(timeout=GEMINI_TIMEOUT) as http:
         for _ in range(MAX_STEPS):
-            try:
-                r = await http.post(
-                    GEMINI_URL.format(model=model),
-                    headers={"x-goog-api-key": key},
-                    json={
-                        "system_instruction": {"parts": [{"text": SYSTEM.format(today=date.today().isoformat())}]},
-                        "contents": contents,
-                        "tools": TOOLS,
-                        "generationConfig": {"temperature": 0.2},
-                    },
-                )
-            except httpx.HTTPError as e:
-                return {"reply": f"Could not reach the AI model ({type(e).__name__}: {e}). Model: {model}.",
-                        "steps": steps, "history": history or []}
-            if r.status_code != 200:
-                return {"reply": f"The AI model returned an error ({r.status_code}): {r.text[:300]}",
+            r, problems = await _call_gemini(http, key, contents)
+            if r is None:
+                return {"reply": "No AI model answered. " + " | ".join(problems),
                         "steps": steps, "history": history or []}
             cands = r.json().get("candidates") or []
             content = (cands[0].get("content") if cands else None) or {"role": "model", "parts": []}

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 load_dotenv()
 
+from . import agent as agent_mod  # noqa: E402
 from .agent import run_agent  # noqa: E402
 from .paypal import MockPayPal, PayPalError, make_client  # noqa: E402
 
@@ -99,7 +100,7 @@ async def get_events():
 @app.get("/api/config")
 async def config():
     return {"paypal_mode": "mock" if isinstance(paypal, MockPayPal) else os.getenv("PAYPAL_ENV", "sandbox"),
-            "agent_mode": "mock" if os.getenv("AGENT_MOCK") == "1" else os.getenv("GEMINI_MODEL", "gemini-flash-latest")}
+            "agent_mode": "mock" if os.getenv("AGENT_MOCK") == "1" else (agent_mod._working_model or agent_mod.model_chain()[0])}
 
 
 @app.get("/api/mock/pay/{invoice_id}", response_class=HTMLResponse)
