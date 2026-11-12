@@ -6,6 +6,14 @@ PayMeBot removes that work. You tell it in one sentence what you did. An AI agen
 
 Built for the PayPal AI Hackathon.
 
+## Try the hosted demo
+
+**https://paymebot.onrender.com**
+
+- The free hosting plan sleeps. The first page load can take about one minute.
+- The demo uses a PayPal **sandbox** business account. No real money moves.
+- To test a payment, use the email of a PayPal sandbox personal account as the client email. The sandbox business account is in India, and PayPal does not send invoices from an India business to a customer in India. Use a sandbox account from a different country, for example the United States.
+
 ## What it does
 
 1. **Understands plain language.** Example: "Logo design for Ravi Kumar (ravi@example.com), 3 hours at $40. Send it, due Friday."
@@ -26,7 +34,7 @@ Built for the PayPal AI Hackathon.
 | AI agent | Google Gemini with function calling. The model selects the tools. The server runs them. The app tries a list of models in order until one answers. |
 | Agent tools | `create_invoice`, `send_invoice`, `list_invoices`, `get_invoice`, `send_reminder` (guarded by the anti-spam policy) |
 | PayPal | OAuth 2.0, Invoicing API v2 (create, send, list, remind), Webhooks with signature verification |
-| UI | Plain HTML and JavaScript with AG Grid Community |
+| UI | Plain HTML and JavaScript with AG Grid Community: status tabs, currency selector, 15 rows per page, automatic column widths |
 | Server | Python, FastAPI |
 | Hosting | Render (`render.yaml` included) |
 
@@ -71,7 +79,7 @@ Open http://localhost:8000.
 
 ### Webhooks (optional)
 
-In the PayPal dashboard, add a webhook for your app with the URL `https://YOUR-HOST/api/webhooks/paypal` and the "Invoicing" events. Put the webhook ID in `PAYPAL_WEBHOOK_ID`. The server then verifies each webhook signature with PayPal.
+In the PayPal dashboard, add a webhook for your app with the URL `https://YOUR-HOST/api/webhooks/paypal` and the "Invoicing" events. Payment events then show in the activity list. Optional: put the webhook ID in `PAYPAL_WEBHOOK_ID`, and the server verifies each webhook signature with PayPal.
 
 ## Deploy to Render
 
